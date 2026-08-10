@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 # --- 1. 網頁核心外觀配置 ---
 st.set_page_config(page_title="美股雷達 V07.0 (P0無偏誤修正版)", page_icon="🔮", layout="wide")
 st.title("🔮 美股量化沙盒 V07.0 (P0 消除前視偏誤與真實複利回測版)")
-st.markdown("已完成 **P0 核心重構與資料對齊修復**：排除「同一 K 線偷看未來」、「當天看收盤當天成交」偏誤，修復美股未實現損益符號顯示 Bug，並導入 **T+1 開盤成交、真實交易成本與複利資金曲線**。")
+st.markdown("已完成 **P0 核心重構與資料對齊修復**：排除「同一 K 線偷看未來」、「當天看收盤當天成交」偏誤，修復欄位自動清洗機制，並導入 **T+1 開盤成交、真實交易成本與複利資金曲線**。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -42,18 +42,23 @@ backtest_days = st.sidebar.slider("歷史回測天數設定", min_value=100, max
 enable_fcf_filter = st.sidebar.checkbox("🛡️ 啟用「自由現金流 > 0」安全過濾", value=True)
 enable_earnings_shield = st.sidebar.checkbox("💣 啟用「3 天內發布財報」強制避險", value=True)
 
-# 輔助函式：清洗 yfinance 日期與多層欄位
-def clean_yf_df(df, col_name='Close'):
+# 🛠️ 核心修正：多層欄位自動智慧扁平化函式
+def fix_yf_columns(df):
     if df is None or df.empty:
-        return pd.DataFrame()
+        return df
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-    if col_name in df.columns:
-        res = df[[col_name]].copy()
-        res.columns = [col_name]
-        res.index = pd.to_datetime(pd.to_datetime(res.index).date)
-        return res
-    return pd.DataFrame()
+        found_level = None
+        for level in range(df.columns.nlevels):
+            level_vals = [str(c).title() for c in df.columns.get_level_values(level)]
+            if 'Close' in level_vals:
+                found_level = level
+                break
+        if found_level is not None:
+            df.columns = df.columns.get_level_values(found_level)
+        else:
+            df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+    df.columns = [str(c).title() for c in df.columns]
+    return df
 
 # --- 3. 🌐 V07 美股大環境與總經雷達 ---
 @st.cache_data(ttl=1800)
@@ -62,11 +67,11 @@ def fetch_us_macro_dataframe():
         vix_raw = yf.Ticker("^VIX").history(period="2y")
         spy_raw = yf.Ticker("SPY").history(period="2y")
         
-        vix_c = clean_yf_df(vix_raw, 'Close').rename(columns={'Close': 'VIX'})
-        spy_c = clean_yf_df(spy_raw, 'Close').rename(columns={'Close': 'SPY_Close'})
+        vix_c = fix_yf_columns(vix_raw)[['Close']].rename(columns={'Close': 'VIX'})
+        spy_c = fix_yf_columns(spy_raw)[['Close']].rename(columns={'Close': 'SPY_Close'})
         
-        if spy_c.empty or vix_c.empty:
-            raise ValueError("無法取得完整的美股大盤或 VIX 數據")
+        vix_c.index = pd.to_datetime(pd.to_datetime(vix_c.index).date)
+        spy_c.index = pd.to_datetime(pd.to_datetime(spy_c.index).date)
 
         spy_c['SPY_MA200'] = spy_c['SPY_Close'].rolling(200).mean()
         spy_c['Market_Bull'] = spy_c['SPY_Close'] >= spy_c['SPY_MA200']
@@ -117,6 +122,7 @@ def fetch_fundamental_and_news(ticker, cloud_dict):
 
 # --- 5. 技術指標計算 ---
 def calculate_indicators(df):
+    df = fix_yf_columns(df)
     high_low_diff = (df['High'] - df['Low']).replace(0, 0.001) 
     mf_multiplier = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / high_low_diff
     df['價量動能流'] = (df['Volume'] * mf_multiplier / 1000000).round(2)
@@ -154,10 +160,7 @@ def calculate_indicators(df):
 # --- 6. V07 P0 美股歷史回測引擎 ---
 def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fund_info, 
                                fee_rate=0.0005, tax_rate=0.0, slippage=0.001):
-    df_st = df_stock.copy()
-    if isinstance(df_st.columns, pd.MultiIndex):
-        df_st.columns = [c[0] if isinstance(c, tuple) else c for c in df_st.columns]
-        
+    df_st = fix_yf_columns(df_stock.copy())
     df_st.index = pd.to_datetime(pd.to_datetime(df_st.index).date)
     
     valid_df = df_st.join(df_macro_input[['VIX', 'Market_Bull']], how='left').ffill().bfill().dropna().tail(days + 1).copy()
@@ -274,6 +277,7 @@ def process_single_stock_us(ticker, cloud_dict, backtest_days, df_macro_data, st
     try:
         df_stock = yf.download(ticker, period="2y", progress=False)
         if df_stock.empty: return [], {}, [], {}
+        df_stock = fix_yf_columns(df_stock)
         df_stock = calculate_indicators(df_stock)
         
         df_temp_clean = df_stock.dropna(subset=['Close'])
