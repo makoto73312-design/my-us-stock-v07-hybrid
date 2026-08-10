@@ -8,9 +8,9 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="美股雷達 V07.0 (P0無偏誤版)", page_icon="🔮", layout="wide")
+st.set_page_config(page_title="美股雷達 V07.0 (P0無偏誤修正版)", page_icon="🔮", layout="wide")
 st.title("🔮 美股量化沙盒 V07.0 (P0 消除前視偏誤與真實複利回測版)")
-st.markdown("已完成 **P0 核心重構**：已排除「同一 K 線偷看未來」、「穿越時空總經」、「當天看收盤當天成交」三大偏誤，修復美股損益顯示 Bug，並導入 **T+1 開盤成交、真實交易成本與複利資金曲線**。")
+st.markdown("已完成 **P0 核心重構與資料對齊修復**：排除「同一 K 線偷看未來」、「當天看收盤當天成交」偏誤，修復美股未實現損益符號顯示 Bug，並導入 **T+1 開盤成交、真實交易成本與複利資金曲線**。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -42,20 +42,36 @@ backtest_days = st.sidebar.slider("歷史回測天數設定", min_value=100, max
 enable_fcf_filter = st.sidebar.checkbox("🛡️ 啟用「自由現金流 > 0」安全過濾", value=True)
 enable_earnings_shield = st.sidebar.checkbox("💣 啟用「3 天內發布財報」強制避險", value=True)
 
-# --- 3. 🌐 V07 大環境與總經雷達 (抓取歷史 2 年每日 VIX 與 SPY 數據進行動態比對) ---
+# 輔助函式：清洗 yfinance 日期與多層欄位
+def clean_yf_df(df, col_name='Close'):
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
+    if col_name in df.columns:
+        res = df[[col_name]].copy()
+        res.columns = [col_name]
+        res.index = pd.to_datetime(pd.to_datetime(res.index).date)
+        return res
+    return pd.DataFrame()
+
+# --- 3. 🌐 V07 美股大環境與總經雷達 ---
 @st.cache_data(ttl=1800)
 def fetch_us_macro_dataframe():
     try:
-        vix_df = yf.Ticker("^VIX").history(period="2y")
-        spy_df = yf.Ticker("SPY").history(period="2y")
+        vix_raw = yf.Ticker("^VIX").history(period="2y")
+        spy_raw = yf.Ticker("SPY").history(period="2y")
         
-        vix_clean = vix_df[['Close']].rename(columns={'Close': 'VIX'})
-        spy_clean = spy_df[['Close']].rename(columns={'Close': 'SPY_Close'})
-        spy_clean['SPY_MA200'] = spy_clean['SPY_Close'].rolling(200).mean()
-        spy_clean['Market_Bull'] = spy_clean['SPY_Close'] >= spy_clean['SPY_MA200']
+        vix_c = clean_yf_df(vix_raw, 'Close').rename(columns={'Close': 'VIX'})
+        spy_c = clean_yf_df(spy_raw, 'Close').rename(columns={'Close': 'SPY_Close'})
         
-        df_macro = spy_clean.join(vix_clean, how='inner').dropna()
-        df_macro.index = pd.to_datetime(df_macro.index).tz_localize(None)
+        if spy_c.empty or vix_c.empty:
+            raise ValueError("無法取得完整的美股大盤或 VIX 數據")
+
+        spy_c['SPY_MA200'] = spy_c['SPY_Close'].rolling(200).mean()
+        spy_c['Market_Bull'] = spy_c['SPY_Close'] >= spy_c['SPY_MA200']
+        
+        df_macro = spy_c.join(vix_c, how='left').ffill().bfill().dropna()
         
         latest_vix = float(df_macro['VIX'].iloc[-1])
         latest_bull = bool(df_macro['Market_Bull'].iloc[-1])
@@ -68,7 +84,7 @@ def fetch_us_macro_dataframe():
             
         return df_macro, latest_vix, latest_bull, posture_auto
     except Exception:
-        dates = pd.date_range(end=datetime.now(), periods=500)
+        dates = pd.date_range(end=pd.Timestamp.now().normalize(), periods=500, freq='D')
         df_macro = pd.DataFrame({'VIX': 18.0, 'Market_Bull': True}, index=dates)
         return df_macro, 18.0, True, "🛡️ 標準平衡型 (預設)"
 
@@ -139,9 +155,12 @@ def calculate_indicators(df):
 def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fund_info, 
                                fee_rate=0.0005, tax_rate=0.0, slippage=0.001):
     df_st = df_stock.copy()
-    df_st.index = pd.to_datetime(df_st.index).tz_localize(None)
+    if isinstance(df_st.columns, pd.MultiIndex):
+        df_st.columns = [c[0] if isinstance(c, tuple) else c for c in df_st.columns]
+        
+    df_st.index = pd.to_datetime(pd.to_datetime(df_st.index).date)
     
-    valid_df = df_st.join(df_macro_input[['VIX', 'Market_Bull']], how='inner').dropna().tail(days + 1).copy()
+    valid_df = df_st.join(df_macro_input[['VIX', 'Market_Bull']], how='left').ffill().bfill().dropna().tail(days + 1).copy()
     if len(valid_df) < 10:
         return "⚠️ 數據不足", 0.0, 0.0, 0, "0.00", "❌ 不推薦", "🛑 數據不足", "-", "-", "-", [], [], [], valid_df, 0.0, 0.0
 
@@ -160,7 +179,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     vixs, m_bulls = valid_df['VIX'].values, valid_df['Market_Bull'].values
 
     s_ma_vals = valid_df['MA5'].values if "A:" in strategy_name else valid_df['MA14'].values
-    m200_vals, r14_vals, rsi_vals = valid_df['200MA'].values, valid_df['ROC14'].values, valid_df['RSI_14'].values
+    r14_vals, rsi_vals = valid_df['ROC14'].values, valid_df['RSI_14'].values
     vol_vals, vol_m20_vals = valid_df['Volume'].values, valid_df['Vol_MA20'].values
     m_shrink_vals, m_hist_vals = valid_df['MACD_Shrink'].values, valid_df['MACD_Hist'].values
 
@@ -189,7 +208,6 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
                 trade_logs.append({"交易日期": date_str, "動作狀態": "🟢 買入進場 (BUY)", "執行價格": f"${entry_price:.2f}", "單筆報酬": "-"})
                 plot_buys.append((dates[i], entry_price))
         else:
-            # 防守停損計算
             stop_price = highest_price_prior * (1 - stop_loss_pct)
             is_exit = False
             exit_price = 0.0
@@ -240,7 +258,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     if has_position:
         current_status = "📦 獲利續抱中 (HOLD)"
         unrealized_pnl = (current_close - entry_price_with_cost) / entry_price_with_cost
-        pnl_str = f"{unrealized_pnl*100:+.2f}%" # 修復 Bug: 移除多餘的 $ 符號
+        pnl_str = f"{unrealized_pnl*100:+.2f}%"
         entry_price_str = f"${entry_price:.2f}"
         sl_price_str = f"${highest_price_prior * (1 - stop_loss_pct):.2f}"
     else:
@@ -251,12 +269,11 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
 
     return "📡 運算完畢", total_return, final_win_rate, total_trades, pf_str, stars, current_status, entry_price_str, sl_price_str, pnl_str, trade_logs, plot_buys, plot_sells, valid_df, entry_price, highest_price_prior * (1 - stop_loss_pct)
 
-# ⚡ 多線程 Worker 函數
+# ⚡ 多線程 Worker
 def process_single_stock_us(ticker, cloud_dict, backtest_days, df_macro_data, strategies):
     try:
         df_stock = yf.download(ticker, period="2y", progress=False)
         if df_stock.empty: return [], {}, [], {}
-        df_stock.columns = [col[0] if isinstance(col, tuple) else col for col in df_stock.columns]
         df_stock = calculate_indicators(df_stock)
         
         df_temp_clean = df_stock.dropna(subset=['Close'])
@@ -292,8 +309,8 @@ col_v2.metric("S&P 500 大盤位階", "年線之上 (多頭)" if is_spy_bull els
 col_v3.metric("系統動態總經姿態", market_posture)
 st.divider()
 
-if st.button("🚀 啟動 V07.0 美股全自動多因子掃描引擎 (⚡ 多線程 P0 無偏誤版)", use_container_width=True):
-    with st.spinner("正在啟動 ThreadPoolExecutor 多線程引擎進行 P0 無偏誤計算..."):
+if st.button("🚀 啟動 V07.0 美股全自動多因子掃描引擎 (⚡ 多線程 P0 修復版)", use_container_width=True):
+    with st.spinner("正在啟動 ThreadPoolExecutor 多線程引擎進行 P0 計算..."):
         master_report, strategies = [], ["A: 激進動能型", "B: 穩健波段型"]
         futures = []
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -312,7 +329,7 @@ if st.button("🚀 啟動 V07.0 美股全自動多因子掃描引擎 (⚡ 多線
         st.success("📊 V07.0 美股無偏誤回測計算完成！")
 
 # --- 9. 網頁分頁系統 ---
-tab_v07, tab_debug, tab_manage = st.tabs(["📊 倉位動作與複利總表", "🔍 歷史回測驗證", "➕ 雲端清單管理"])
+tab_v07, tab_debug = st.tabs(["📊 倉位動作與複利總表", "🔍 歷史回測驗證"])
 
 with tab_v07:
     if st.session_state.calculated:
@@ -324,7 +341,7 @@ with tab_debug:
     if st.session_state.calculated:
         col_tk, col_st = st.columns(2)
         with col_tk: debug_ticker = st.selectbox("🎯 選擇美股代號", ticker_list)
-        with col_st: debug_strat = st.selectbox("🔮 選擇策略", ["A: 激進動能型", "B: 稳健波段型"])
+        with col_st: debug_strat = st.selectbox("🔮 選擇策略", ["A: 激進動能型", "B: 穩健波段型"])
         db_key = (debug_ticker, debug_strat)
         if db_key in st.session_state.detail_db:
             data_pack = st.session_state.detail_db[db_key]
@@ -337,7 +354,3 @@ with tab_debug:
             st.plotly_chart(fig, use_container_width=True)
             if not logs_df.empty: st.dataframe(logs_df, use_container_width=True, hide_index=True)
     else: st.info("💡 請先啟動掃描引擎。")
-
-with tab_manage:
-    st.header("➕ 線上新增美股至雲端清單")
-    st.info("功能維護中，可於 sidebar 直接貼上股票清單進行測試。")
