@@ -9,9 +9,9 @@ import traceback
 from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="美股雷達 V07.3 (診斷模式)", page_icon="🔮", layout="wide")
-st.title("🔮 美股量化沙盒 V07.3 (內建底層數據診斷與 Log 紀錄版)")
-st.markdown("已實裝 **🐛 系統診斷面板**：執行掃描後將自動記錄抓取狀態、資料維度與詳細 Error ，請將診斷文字貼給 AI 除錯。")
+st.set_page_config(page_title="美股雷達 V07.3 (P3完美修復版)", page_icon="🔮", layout="wide")
+st.title("🔮 美股量化沙盒 V07.3 (P3 機構級統計與全防護版)")
+st.markdown("已完成 **P3 評估重構與 Log 診斷除錯**：實裝 **Expectancy 期望值**、**CAGR**、**MDD**、**Sharpe** 與 **MAE/MFE 診斷**。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -385,9 +385,8 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             f"{expectancy*100:+.2f}%", f"{cagr*100:+.1f}%", f"{mdd*100:.1f}%", 
             f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%")
 
-# ⚡ 單個股票處理 Worker (帶有極詳細診斷 Log)
+# ⚡ 單個股票處理 Worker
 def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macro_data, strategies):
-    log_err = ""
     try:
         if df_stock is None or df_stock.empty or len(df_stock) < 10:
             stock_reports = []
@@ -401,7 +400,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                     "ATR動態防守價": "-", "複利總報酬": "0.0%", 
                     "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
                 })
-            return stock_reports, {}, f"K線數據為空或長度不足 (<10)"
+            return stock_reports, {}, "K線數據為空或長度不足 (<10)"
 
         df_stock = clean_and_flatten_df(df_stock)
         df_stock = calculate_indicators(df_stock)
@@ -462,7 +461,7 @@ col_v2.metric("S&P 500 大盤位階", "年線之上 (多頭)" if is_spy_bull els
 col_v3.metric("系統動態總經姿態", market_posture)
 st.divider()
 
-if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎 (🐛 含診斷模式)", use_container_width=True):
+if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎", use_container_width=True):
     st.session_state.debug_logs = []
     logs = st.session_state.debug_logs
     logs.append(f"🟢 [1] 解析股票代號清單 (共 {len(ticker_list)} 檔): {ticker_list[:5]}...")
@@ -480,8 +479,9 @@ if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎 (🐛 含�
             df_chunk = yf.download(chunk, period="2y", progress=False, threads=True)
             logs.append(f"   ➔ 下載完成! df_chunk Shape: {df_chunk.shape} | 是否為空: {df_chunk.empty}")
             if isinstance(df_chunk.columns, pd.MultiIndex):
-                logs.columns_info = f"   ➔ MultiIndex Levels: {df_chunk.columns.nlevels} | Level 0 values: {df_chunk.columns.levels[0][:3]}"
-                logs.append(logs.columns_info)
+                # 🛠️ 核心修正：正確寫入診斷紀錄
+                col_info = f"   ➔ MultiIndex Levels: {df_chunk.columns.nlevels} | Level 0 values: {list(df_chunk.columns.levels[0][:3])}"
+                logs.append(col_info)
         except Exception as e:
             df_chunk = pd.DataFrame()
             logs.append(f"   ❌ 第 {idx_chunk+1} 批下載爆發 Exception: {str(e)}")
@@ -504,7 +504,7 @@ if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎 (🐛 含�
 
 # 🐛 系統診斷 Log 展示區塊
 if st.session_state.get("debug_logs"):
-    with st.expander("🐛 系統診斷日誌 (請複製此區塊文字貼給 AI 進行秒級除錯)", expanded=True):
+    with st.expander("🐛 系統診斷日誌", expanded=False):
         st.code("\n".join(st.session_state.debug_logs), language="text")
 
 # --- 9. 網頁分頁系統 ---
