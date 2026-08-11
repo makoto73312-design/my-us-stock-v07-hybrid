@@ -39,7 +39,7 @@ tickers_input = st.sidebar.text_area("📡 當前雲端同步清單", default_ti
 temp_raw_list = [t.strip().upper() for t in re.split(r'[\n\r,\s]+', tickers_input) if t.strip()]
 ticker_list = list(dict.fromkeys(temp_raw_list))
 
-# 🛠️ 徹底對策：強效預先註冊與成員安全防呆，徹底防止美股首次點選跳回分頁 1
+# 預先註冊 UI 選單狀態變數，防止首次點擊跳回分頁 1
 if ticker_list:
     if "us_debug_tk" not in st.session_state or st.session_state["us_debug_tk"] not in ticker_list:
         st.session_state["us_debug_tk"] = ticker_list[0]
@@ -500,7 +500,12 @@ if st.button("🚀 啟動 V07.0 美股全自動多因子掃描引擎", use_conta
 
     st.session_state.final_df = pd.DataFrame(master_report)
     st.session_state.calculated = True
-    st.success(f"🎉 掃描完成！已呈現 {len(st.session_state.final_df)} 筆報告！")
+    # 🛠️ 核心修復：使用常態 caption 顯示成功時間，讓頁面結構在點擊選單前後完全固定，徹底根除美股跳頁
+    st.session_state["scan_time_us"] = datetime.now().strftime("%H:%M:%S")
+
+# 顯示固定結構的成功提示
+if st.session_state.get("calculated"):
+    st.caption(f"✅ 上次掃描成功時間：{st.session_state.get('scan_time_us', '')}（共呈現 {len(st.session_state.final_df)} 筆機構評估報告）")
 
 # 🐛 系統診斷 Log 區塊（若開啟開關，顯現在側邊欄底部）
 if show_debug_log and st.session_state.get("debug_logs"):
