@@ -9,9 +9,9 @@ import traceback
 from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="🔮 美股量化沙盒 V07.0 (正式版)", page_icon="🔮", layout="wide")
-st.title("🔮 美股量化投資沙盒 V07.0 (機構級多因子無偏誤量化系統)")
-st.caption("🚀 已實裝 **V07 核心機構架構**：消除前視偏誤、T+1開盤成交、ATR動態停損、RS20相對強弱Alpha與 Expectancy/CAGR/MDD/Sharpe 機構級統計診斷。")
+st.set_page_config(page_title="🔮 美股量化沙盒 V07.1", page_icon="🔮", layout="wide")
+st.title("🔮 美股量化投資沙盒 V07.1 (七維矩陣與布林通道整合升級版)")
+st.caption("🚀 已升級 **V07.1 完整架構**：整合布林通道帶狀壓縮 (BB Squeeze)、七維戰術檢核矩陣、T+1開盤成交、ATR動態停損與 Expectancy/CAGR/MDD/Sharpe 機構級統計診斷。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -39,7 +39,7 @@ tickers_input = st.sidebar.text_area("📡 當前雲端同步清單", default_ti
 temp_raw_list = [t.strip().upper() for t in re.split(r'[\n\r,\s]+', tickers_input) if t.strip()]
 ticker_list = list(dict.fromkeys(temp_raw_list))
 
-# 預先註冊 UI 選單狀態變數，防止首次點擊跳回分頁 1
+# 預先註冊 UI 選單狀態變數，徹底防止切換選單跳回分頁 1
 if ticker_list:
     if "us_debug_tk" not in st.session_state or st.session_state["us_debug_tk"] not in ticker_list:
         st.session_state["us_debug_tk"] = ticker_list[0]
@@ -163,7 +163,7 @@ def fetch_fundamental_and_news(ticker, cloud_dict):
         pass
     return f_info
 
-# --- 5. 技術指標計算 ---
+# --- 5. 技術指標計算 (含布林通道與帶狀壓縮) ---
 def calculate_indicators(df):
     df = clean_and_flatten_df(df)
     high_low_diff = (df['High'] - df['Low']).replace(0, 0.001) 
@@ -171,15 +171,25 @@ def calculate_indicators(df):
     df['價量動能流'] = (df['Volume'] * mf_multiplier / 1000000).round(2)
     df['CLV'] = (df['Close'] - df['Low']) / high_low_diff
     
+    # ATR14
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift(1)).abs()
     low_close = (df['Low'] - df['Close'].shift(1)).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['ATR14'] = tr.rolling(14).mean().fillna(df['Close'] * 0.03)
     
+    # 布林通道 (BB 20, 2)
+    std20 = df['Close'].rolling(20).std().fillna(df['Close'] * 0.02)
+    df['MA20'] = df['Close'].rolling(20).mean()
+    df['BB_Mid'] = df['MA20']
+    df['BB_Upper'] = df['BB_Mid'] + (2.0 * std20)
+    df['BB_Lower'] = df['BB_Mid'] - (2.0 * std20)
+    df['BB_Width'] = (df['BB_Upper'] - df['BB_Lower']) / df['BB_Mid'].replace(0, 1.0)
+    # 布林帶狀壓縮判斷
+    df['BB_Squeeze'] = df['BB_Width'] <= df['BB_Width'].rolling(100, min_periods=20).quantile(0.25)
+
     df['MA5'] = df['Close'].rolling(5).mean()
     df['MA14'] = df['Close'].rolling(14).mean()
-    df['MA20'] = df['Close'].rolling(20).mean()
     df['50MA'] = df['Close'].rolling(50).mean()
     df['200MA'] = df['Close'].rolling(200).mean()
     df['ROC14'] = df['Close'].pct_change(14)
@@ -209,7 +219,7 @@ def calculate_indicators(df):
     df['MACD_Shrink'] = macd_shrink
     return df
 
-# --- 6. V07 P3 美股歷史回測引擎 ---
+# --- 6. V07.1 美股歷史回測與七維矩陣運算引擎 ---
 def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fund_info, 
                                fee_rate=0.0005, tax_rate=0.0, slippage=0.001):
     df_st = clean_and_flatten_df(df_stock.copy())
@@ -219,7 +229,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     
     if len(valid_df) < 10:
         return ("⚠️ 數據不足", 0.0, 0.0, 0, "0.00", "D級", "🛑 數據不足", "-", "-", "-", 
-                [], [], [], valid_df, 0.0, 0.0, "0.0%", "0.0%", "0.0%", "0.0%", "0.00", "0.0%", "0.0%")
+                [], [], [], valid_df, 0.0, 0.0, "0.0%", "0.0%", "0.0%", "0.0%", "0.00", "0.0%", "0.0%", "0/7 (無)")
 
     valid_df['Stock_Ret20'] = valid_df['Close'].pct_change(20)
     valid_df['Macro_Ret20'] = valid_df['SPY_Close'].pct_change(20)
@@ -246,6 +256,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     vol_vals, vol_m20_vals = valid_df['Volume'].values, valid_df['Vol_MA20'].values
     m_shrink_vals, m_hist_vals = valid_df['MACD_Shrink'].values, valid_df['MACD_Hist'].values
     clv_vals, atr_vals = valid_df['CLV'].values, valid_df['ATR14'].values
+    bb_upper_vals, bb_sqz_vals = valid_df['BB_Upper'].values, valid_df['BB_Squeeze'].values
     pv_flow_vals, q80_vals = valid_df['價量動能流'].values, valid_df['動能流_Q80'].values
     rs_vals = valid_df['RS_20'].values
 
@@ -319,18 +330,35 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             m_shrink_p, m_hist_p = m_shrink_vals[i], m_hist_vals[i]
             m_hist_y = m_hist_vals[i-1]
             pv_flow_p, q80_p, rs_p = pv_flow_vals[i], q80_vals[i], rs_vals[i]
+            bb_upper_p, bb_sqz_y = bb_upper_vals[i], bb_sqz_vals[i-1]
             m50_y = m50_vals[i-3] if i >= 3 else m50_p
 
             if "A:" in strategy_name:
                 if (m_shrink_p >= 1 or (m_hist_p > m_hist_y and m_hist_p > 0)) and r14_p > 0 and rsi_p < rsi_max: pending_buy_signal = True
             elif "B:" in strategy_name:
-                if c_p > sma_p and vol_p > vol_m20_p * vol_mult and clv_p >= 0.65 and rs_p > 0: pending_buy_signal = True
+                # 結合布林帶狀壓縮後發動 (BB Squeeze or 強勢開口)
+                if c_p > sma_p and vol_p > vol_m20_p * vol_mult and clv_p >= 0.65 and rs_p > 0 and (bb_sqz_y or c_p >= bb_upper_p * 0.98): pending_buy_signal = True
             elif "C:" in strategy_name:
-                if c_p > sma_p and vol_p > vol_m20_p * (vol_mult * 1.1) and clv_p >= 0.70 and rs_p > 0.02: pending_buy_signal = True
+                # 槓桿強勢型 (要求突破布林上軌 BB Upper)
+                if c_p > bb_upper_p and vol_p > vol_m20_p * (vol_mult * 1.1) and clv_p >= 0.70 and rs_p > 0.02: pending_buy_signal = True
             elif "D:" in strategy_name:
                 if m200_p > 0 and (c_p - m200_p)/m200_p <= dip_pct and rsi_p < 35 and m_shrink_p >= 1 and c_p > opens[i]: pending_buy_signal = True
             elif "E:" in strategy_name:
                 if pv_flow_p > q80_p and pv_flow_p > 0 and c_p > m50_p and m50_p >= m50_y and rs_p > 0: pending_buy_signal = True
+
+    # --------------------- 七維戰術檢核矩陣計算 (7D Checklist) ---------------------
+    latest_idx = -1
+    d1_bull = bool(m_bulls[latest_idx])
+    d2_vix = bool(vixs[latest_idx] < 22.0)
+    d3_rsi = bool(45.0 <= rsi_vals[latest_idx] <= 75.0)
+    d4_vol = bool(vol_vals[latest_idx] > vol_m20_vals[latest_idx])
+    d5_macd = bool(m_hist_vals[latest_idx] > 0 or m_shrink_vals[latest_idx] >= 1)
+    d6_fcf = bool(fund_info.get("fcf_status") != "NEGATIVE")
+    d7_rs = bool(rs_vals[latest_idx] > 0.0)
+
+    score_7d = sum([d1_bull, d2_vix, d3_rsi, d4_vol, d5_macd, d6_fcf, d7_rs])
+    tag_7d = "極強" if score_7d >= 6 else ("強勢" if score_7d >= 4 else ("中性" if score_7d >= 3 else "偏弱"))
+    matrix_7d_str = f"{score_7d}/7 ({tag_7d})"
 
     total_trades = len(all_returns)
     win_trades = len(win_returns)
@@ -391,7 +419,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             current_status, entry_price_str, sl_price_str, pnl_str, trade_logs, 
             plot_buys, plot_sells, valid_df, entry_price, current_stop_price, rs_tag,
             f"{expectancy*100:+.2f}%", f"{cagr*100:+.1f}%", f"{mdd*100:.1f}%", 
-            f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%")
+            f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%", matrix_7d_str)
 
 # ⚡ 單個股票處理 Worker
 def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macro_data, strategies):
@@ -401,7 +429,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
             for strat in strategies:
                 stock_reports.append({
                     "股票代號": ticker, "當前市價": "-", "策略手法": strat,
-                    "倉位狀態": "🛑 數據不足", "期望值 Expectancy": "0.0%",
+                    "倉位狀態": "🛑 數據不足", "期望值 Expectancy": "0.0%", "七維戰術矩陣": "0/7 (無)",
                     "綜合評級": "D級", "大盤 Alpha (RS20)": "0.0%", "年化 CAGR": "0.0%", 
                     "最大回撤 MDD": "0.0%", "夏普比率 Sharpe": "0.00", "平均浮虧 MAE": "0.0%", 
                     "平均浮盈 MFE": "0.0%", "建議進場價": "-", "未實現損益": "-", 
@@ -423,7 +451,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
         for strat in strategies:
             (radar, ret, win, trades, pf, grade, cur_status, entry_price_val, 
              sl_price, pnl, t_logs, p_buys, p_sells, v_df, raw_entry, raw_sl, 
-             rs_tag, expectancy_str, cagr_str, mdd_str, sharpe_str, mae_str, mfe_str) = run_backtest_engine_v07_us(
+             rs_tag, expectancy_str, cagr_str, mdd_str, sharpe_str, mae_str, mfe_str, matrix_7d_str) = run_backtest_engine_v07_us(
                 df_stock, df_macro_data, strat, backtest_days, fund_info
             )
             
@@ -433,10 +461,10 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
             stock_reports.append({
                 "股票代號": ticker, "當前市價": f"${current_close:.2f}", "策略手法": strat,
                 "倉位狀態": cur_status, "期望值 Expectancy": expectancy_str,
-                "綜合評級": grade, "大盤 Alpha (RS20)": rs_tag, "年化 CAGR": cagr_str, 
-                "最大回撤 MDD": mdd_str, "夏普比率 Sharpe": sharpe_str, "平均浮虧 MAE": mae_str, 
-                "平均浮盈 MFE": mfe_str, "建議進場價": entry_price_val, "未實現損益": pnl, 
-                "ATR動態防守價": sl_price, "複利總報酬": f"{ret * 100:+.2f}%", 
+                "七維戰術矩陣": matrix_7d_str, "綜合評級": grade, "大盤 Alpha (RS20)": rs_tag, 
+                "年化 CAGR": cagr_str, "最大回撤 MDD": mdd_str, "夏普比率 Sharpe": sharpe_str, 
+                "平均浮虧 MAE": mae_str, "平均浮盈 MFE": mfe_str, "建議進場價": entry_price_val, 
+                "未實現損益": pnl, "ATR動態防守價": sl_price, "複利總報酬": f"{ret * 100:+.2f}%", 
                 "歷史勝率": f"{win * 100:.1f}%", "交易次數": trades, "獲利因子": pf
             })
         return stock_reports, stock_details
@@ -445,7 +473,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
         for strat in strategies:
             stock_reports.append({
                 "股票代號": ticker, "當前市價": "-", "策略手法": strat,
-                "倉位狀態": "🛑 數據不足", "期望值 Expectancy": "0.0%",
+                "倉位狀態": "🛑 數據不足", "期望值 Expectancy": "0.0%", "七維戰術矩陣": "0/7 (無)",
                 "綜合評級": "D級", "大盤 Alpha (RS20)": "0.0%", "年化 CAGR": "0.0%", 
                 "最大回撤 MDD": "0.0%", "夏普比率 Sharpe": "0.00", "平均浮虧 MAE": "0.0%", 
                 "平均浮盈 MFE": "0.0%", "建議進場價": "-", "未實現損益": "-", 
@@ -468,7 +496,7 @@ col_v2.metric("S&P 500 大盤位階", "年線之上 (多頭)" if is_spy_bull els
 col_v3.metric("系統動態總經姿態", market_posture)
 st.divider()
 
-if st.button("🚀 啟動 V07.0 美股全自動多因子掃描引擎", use_container_width=True):
+if st.button("🚀 啟動 V07.1 美股全自動多因子掃描引擎", use_container_width=True):
     st.session_state.debug_logs = []
     logs = st.session_state.debug_logs
     logs.append(f"🟢 [1] 解析股票代號清單 (共 {len(ticker_list)} 檔): {ticker_list[:5]}...")
@@ -500,14 +528,11 @@ if st.button("🚀 啟動 V07.0 美股全自動多因子掃描引擎", use_conta
 
     st.session_state.final_df = pd.DataFrame(master_report)
     st.session_state.calculated = True
-    # 🛠️ 核心修復：使用常態 caption 顯示成功時間，讓頁面結構在點擊選單前後完全固定，徹底根除美股跳頁
     st.session_state["scan_time_us"] = datetime.now().strftime("%H:%M:%S")
 
-# 顯示固定結構的成功提示
 if st.session_state.get("calculated"):
     st.caption(f"✅ 上次掃描成功時間：{st.session_state.get('scan_time_us', '')}（共呈現 {len(st.session_state.final_df)} 筆機構評估報告）")
 
-# 🐛 系統診斷 Log 區塊（若開啟開關，顯現在側邊欄底部）
 if show_debug_log and st.session_state.get("debug_logs"):
     with st.sidebar.expander("🐛 系統診斷日誌", expanded=True):
         st.code("\n".join(st.session_state.debug_logs), language="text")
@@ -519,12 +544,11 @@ with tab_v07:
     if st.session_state.calculated:
         st.dataframe(st.session_state.final_df, use_container_width=True, hide_index=True)
     else:
-        st.info("💡 請按下上方「🚀 啟動 V07.0 美股全自動多因子掃描引擎」按鈕開始運算。")
+        st.info("💡 請按下上方「🚀 啟動 V07.1 美股全自動多因子掃描引擎」按鈕開始運算。")
 
 with tab_debug:
     if st.session_state.calculated:
         col_tk, col_st = st.columns(2)
-        # 🛠️ 核心修復：正確綁定 key 避免點選觸發分頁跳轉
         with col_tk: debug_ticker = st.selectbox("🎯 選擇美股代號", ticker_list, key="us_debug_tk")
         with col_st: debug_strat = st.selectbox("🔮 選擇策略", ["A: 激進動能型", "B: 穩健波段型", "C: 槓桿強勢型", "D: 均值回歸抄底型", "E: 價量動能流跟隨型"], key="us_debug_st")
         db_key = (debug_ticker, debug_strat)
@@ -533,9 +557,12 @@ with tab_debug:
             logs_df, buys, sells, v_df = data_pack["logs"], data_pack["buys"], data_pack["sells"], data_pack["v_df"]
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=v_df.index, y=v_df['Close'], mode='lines', name='收盤價', line=dict(color='lightgrey', width=1.5)))
+            if 'BB_Upper' in v_df.columns:
+                fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Upper'], mode='lines', name='布林上軌', line=dict(color='rgba(255,165,0,0.5)', dash='dash')))
+                fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Lower'], mode='lines', name='布林下軌', line=dict(color='rgba(255,165,0,0.5)', dash='dash')))
             if len(buys) > 0: fig.add_trace(go.Scatter(x=[b[0] for b in buys], y=[b[1] for b in buys], mode='markers', name='🟢 BUY (T+1成交)', marker=dict(symbol='triangle-up', size=12, color='#00FF00')))
             if len(sells) > 0: fig.add_trace(go.Scatter(x=[s[0] for s in sells], y=[s[1] for s in sells], mode='markers', name='🔴 SELL (ATR防守離場)', marker=dict(symbol='triangle-down', size=12, color='#FF0000')))
-            fig.update_layout(title=f"<b>美股 {debug_ticker} - {debug_strat} V07.0 軌跡圖</b>", template="plotly_dark")
+            fig.update_layout(title=f"<b>美股 {debug_ticker} - {debug_strat} V07.1 軌跡圖 (含布林通道)</b>", template="plotly_dark")
             st.plotly_chart(fig, use_container_width=True)
             if not logs_df.empty: st.dataframe(logs_df, use_container_width=True, hide_index=True)
     else: st.info("💡 請先啟動掃描引擎。")
