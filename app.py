@@ -10,8 +10,8 @@ from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
 st.set_page_config(page_title="🔮 美股量化沙盒 V07.1", page_icon="🔮", layout="wide")
-st.title("🔮 美股量化投資沙盒 V07.1 (七維矩陣與布林通道獨立分頁版)")
-st.caption("🚀 已實裝 **三大專屬主分頁**：倉位動作總表、七維戰術矩陣診斷卡與布林通道軌跡圖。")
+st.title("🔮 美股量化投資沙盒 V07.1 (戰術分類與機構級量化系統)")
+st.caption("🚀 **V06 經典戰術分類排版 + V07 機構量化引擎**：按 A~E 戰術分頁選股，頁底保留全標的總表，整合七維矩陣與布林通道。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -173,14 +173,6 @@ def calculate_indicators(df):
     df['價量動能流'] = (df['Volume'] * mf_multiplier / 1000000).round(2)
     df['CLV'] = (df['Close'] - df['Low']) / high_low_diff
     
-    # ATR14
-    high_low = df['High'] - df['Low']
-    high_close = (df['High'] - df['Close'].shift(1)).abs()
-    low_close = (df['Low'] - df['Close'].shift(1)).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    df['ATR14'] = tr.rolling(14).mean().fillna(df['Close'] * 0.03)
-    
-    # 布林通道 (BB 20, 2)
     std20 = df['Close'].rolling(20).std().fillna(df['Close'] * 0.02)
     df['MA20'] = df['Close'].rolling(20).mean()
     df['BB_Mid'] = df['MA20']
@@ -345,7 +337,6 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             elif "E:" in strategy_name:
                 if pv_flow_p > q80_p and pv_flow_p > 0 and c_p > m50_p and m50_p >= m50_y and rs_p > 0: pending_buy_signal = True
 
-    # --------------------- 七維戰術矩陣 7D Breakdown 明細 ---------------------
     latest_idx = -1
     d1_bull = bool(m_bulls[latest_idx])
     d2_vix = bool(vixs[latest_idx] < 22.0)
@@ -430,12 +421,10 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             f"{expectancy*100:+.2f}%", f"{cagr*100:+.1f}%", f"{mdd*100:.1f}%", 
             f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%", matrix_7d_str, matrix_7d_details)
 
-# ⚡ 單個股票處理 Worker
 def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macro_data, strategies):
     try:
         if df_stock is None or df_stock.empty or len(df_stock) < 10:
-            stock_reports = []
-            return stock_reports, {}
+            return [], {}
 
         df_stock = clean_and_flatten_df(df_stock)
         df_stock = calculate_indicators(df_stock)
@@ -527,28 +516,69 @@ if show_debug_log and st.session_state.get("debug_logs"):
     with st.sidebar.expander("🐛 系統診斷日誌", expanded=True):
         st.code("\n".join(st.session_state.debug_logs), language="text")
 
-# --- 9. 🚀 網頁三大專屬主分頁系統 ---
-tab_v07, tab_7d, tab_debug = st.tabs(["📊 倉位動作與機構級總表", "🛡️ 七維戰術矩陣診斷", "📈 布林通道與 K 線軌跡"])
+# --- 9. 🚀 網頁三大主分頁系統 (復刻 V06 戰術分類 + 頁底總表) ---
+tab_v06_main, tab_7d, tab_debug = st.tabs(["📊 倉位動作與戰術分類", "🛡️ 七維戰術矩陣診斷", "📈 布林通道與 K 線軌跡"])
 
-with tab_v07:
+with tab_v06_main:
     if st.session_state.calculated:
+        st.markdown("### 🎯 **戰術策略分類面板 (獨立操作篩選)**")
+        
+        # 5 大戰術手法子頁籤
+        strat_tabs = st.tabs([
+            "⚡ A: 激進動能型", 
+            "🌊 B: 穩健波段型", 
+            "🚀 C: 槓桿強勢型", 
+            "🎯 D: 均值回歸抄底型", 
+            "🌊 E: 價量動能流跟隨型"
+        ])
+
+        strat_mapping = [
+            ("⚡ A: 激進動能型", "A: 激進動能型"),
+            ("🌊 B: 穩健波段型", "B: 穩健波段型"),
+            ("🚀 C: 槓桿強勢型", "C: 槓桿強勢型"),
+            ("🎯 D: 均值回歸抄底型", "D: 均值回歸抄底型"),
+            ("🌊 E: 價量動能流跟隨型", "E: 價量動能流跟隨型")
+        ]
+
+        for idx, (label, strat_full_name) in enumerate(strat_mapping):
+            with strat_tabs[idx]:
+                sub_df = st.session_state.final_df[st.session_state.final_df['策略手法'] == strat_full_name].copy()
+                active_df = sub_df[sub_df['倉位狀態'].str.contains("BUY|HOLD|買入|續抱", na=False)]
+
+                col_m1, col_m2, col_m3 = st.columns(3)
+                col_m1.metric("該戰術總掃描標的", f"{len(sub_df)} 檔")
+                col_m2.metric("🟢 當前觸發買訊/持股", f"{len(active_df)} 檔")
+                
+                try:
+                    exp_vals = sub_df['期望值 Expectancy'].str.rstrip('%').astype(float)
+                    avg_exp = exp_vals.mean()
+                    col_m3.metric("該戰術平均期望值", f"{avg_exp:+.2f}%")
+                except Exception:
+                    col_m3.metric("該戰術平均期望值", "-")
+
+                st.dataframe(sub_df, use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.markdown("### 📋 **全標的綜合總表 (Master Table)**")
         st.dataframe(st.session_state.final_df, use_container_width=True, hide_index=True)
     else:
         st.info("💡 請按下上方「🚀 啟動 V07.1 美股全自動多因子掃描引擎」按鈕開始運算。")
 
 with tab_7d:
     if st.session_state.calculated:
-        col_tk_7d, _ = st.columns([1, 2])
+        col_tk_7d, col_st_7d = st.columns(2)
         with col_tk_7d:
-            debug_ticker_7d = st.selectbox("🎯 選擇檢視標的 (七維矩陣)", ticker_list, key="us_7d_tk")
+            debug_ticker_7d = st.selectbox("🎯 選擇美股標的 (七維矩陣)", ticker_list, key="us_7d_tk")
+        with col_st_7d:
+            debug_strat_7d = st.selectbox("🔮 選擇戰術手法", ["A: 激進動能型", "B: 穩健波段型", "C: 槓桿強勢型", "D: 均值回歸抄底型", "E: 價量動能流跟隨型"], key="us_7d_st")
         
-        db_key_7d = (debug_ticker_7d, "A: 激進動能型")
+        db_key_7d = (debug_ticker_7d, debug_strat_7d)
         if db_key_7d in st.session_state.detail_db:
             m_data = st.session_state.detail_db[db_key_7d]
             m_details = m_data.get("matrix_7d_details", [])
             m_str = m_data.get("matrix_7d_str", "0/7")
             
-            st.markdown(f"### 🛡️ **美股 {debug_ticker_7d} - 七維戰術綜合評分：`{m_str}`**")
+            st.markdown(f"### 🛡️ **美股 {debug_ticker_7d} ({debug_strat_7d}) - 七維戰術綜合評分：`{m_str}`**")
             if m_details:
                 df_7d_show = pd.DataFrame(m_details)
                 st.dataframe(df_7d_show, use_container_width=True, hide_index=True)
@@ -575,7 +605,6 @@ with tab_debug:
             
             if len(buys) > 0: fig.add_trace(go.Scatter(x=[b[0] for b in buys], y=[b[1] for b in buys], mode='markers', name='🟢 BUY (T+1成交)', marker=dict(symbol='triangle-up', size=12, color='#00FF00')))
             if len(sells) > 0: fig.add_trace(go.Scatter(x=[s[0] for s in sells], y=[s[1] for s in sells], mode='markers', name='🔴 SELL (ATR防守離場)', marker=dict(symbol='triangle-down', size=12, color='#FF0000')))
-            
             fig.update_layout(title=f"<b>美股 {debug_ticker} - {debug_strat} V07.1 軌跡圖 (含布林通道 20,2)</b>", template="plotly_dark")
             st.plotly_chart(fig, use_container_width=True)
             if not logs_df.empty: st.dataframe(logs_df, use_container_width=True, hide_index=True)
