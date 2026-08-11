@@ -5,12 +5,13 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 import re
+import traceback
 from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="美股雷達 V07.3 (P3無懈可擊修復版)", page_icon="🔮", layout="wide")
-st.title("🔮 美股量化沙盒 V07.3 (P3 分批防封鎖與保證全員呈現版)")
-st.markdown("已完成 **P3 評估重構與連線全面防護**：導入 **25 檔分批打包連線 (Chunked Download)** 徹底解決 Yahoo 防封鎖，並實裝 **Expectancy 期望值**、**CAGR**、**MDD**、**Sharpe** 與 **MAE/MFE 診斷**。")
+st.set_page_config(page_title="美股雷達 V07.3 (診斷模式)", page_icon="🔮", layout="wide")
+st.title("🔮 美股量化沙盒 V07.3 (內建底層數據診斷與 Log 紀錄版)")
+st.markdown("已實裝 **🐛 系統診斷面板**：執行掃描後將自動記錄抓取狀態、資料維度與詳細 Error ，請將診斷文字貼給 AI 除錯。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -33,16 +34,15 @@ def get_tickers_from_sheet(url):
         return "NVDA, AAPL, TSLA, MSFT, AMD", {}
 
 default_tickers, cloud_names_dict = get_tickers_from_sheet(GSHEET_URL)
-tickers_input = st.sidebar.text_area("📡 當前雲端同步清單 (相容 Enter 換行與逗號)", default_tickers, height=120)
+tickers_input = st.sidebar.text_area("📡 當前雲端同步清單", default_tickers, height=120)
 
-# 解析股票代號清單 (相容換行、逗號與空格，並去重)
 temp_raw_list = [t.strip().upper() for t in re.split(r'[\n\r,\s]+', tickers_input) if t.strip()]
 ticker_list = list(dict.fromkeys(temp_raw_list))
 
 backtest_days = st.sidebar.slider("歷史回測天數設定", min_value=100, max_value=500, value=300, step=50)
 enable_fcf_filter = st.sidebar.checkbox("🛡️ 啟用「FCF 負值」強制攔截", value=True)
 
-# 🛠️ 萬能欄位清洗函式：處理 yfinance 的多層 MultiIndex
+# 🛠️ 萬能欄位清洗函式
 def clean_and_flatten_df(df):
     if df is None or df.empty:
         return pd.DataFrame()
@@ -73,7 +73,7 @@ def clean_and_flatten_df(df):
     df.columns = new_cols
     return df
 
-# 🛠️ 萬能單股抽取函式
+# 🛠️ 單股抽取函式
 def extract_stock_from_chunk(df_chunk, ticker):
     if df_chunk is None or df_chunk.empty:
         return pd.DataFrame()
@@ -118,13 +118,13 @@ def fetch_us_macro_dataframe():
         else:
             posture_auto = "🛡️ 標準平衡型 (常態橫盤整理)"
             
-        return df_macro, latest_vix, latest_bull, posture_auto
-    except Exception:
+        return df_macro, latest_vix, latest_bull, posture_auto, "SUCCESS"
+    except Exception as e:
         dates = pd.date_range(end=pd.Timestamp.now().normalize(), periods=500, freq='D')
         df_macro = pd.DataFrame({'VIX': 18.0, 'Market_Bull': True, 'SPY_Close': 500.0}, index=dates)
-        return df_macro, 18.0, True, "🛡️ 標準平衡型 (預設)"
+        return df_macro, 18.0, True, "🛡️ 標準平衡型 (預設)", f"ERROR: {str(e)}"
 
-df_macro, vix_score, is_spy_bull, market_posture = fetch_us_macro_dataframe()
+df_macro, vix_score, is_spy_bull, market_posture, macro_status = fetch_us_macro_dataframe()
 
 # --- 4. 🏢 V07 基本面雷達 ---
 @st.cache_data(ttl=3600)
@@ -385,8 +385,9 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             f"{expectancy*100:+.2f}%", f"{cagr*100:+.1f}%", f"{mdd*100:.1f}%", 
             f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%")
 
-# ⚡ 單個股票處理 Worker (100% 絕對防呆，數據不足絕不丟棄)
+# ⚡ 單個股票處理 Worker (帶有極詳細診斷 Log)
 def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macro_data, strategies):
+    log_err = ""
     try:
         if df_stock is None or df_stock.empty or len(df_stock) < 10:
             stock_reports = []
@@ -400,7 +401,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                     "ATR動態防守價": "-", "複利總報酬": "0.0%", 
                     "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
                 })
-            return stock_reports, {}
+            return stock_reports, {}, f"K線數據為空或長度不足 (<10)"
 
         df_stock = clean_and_flatten_df(df_stock)
         df_stock = calculate_indicators(df_stock)
@@ -431,8 +432,9 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                 "ATR動態防守價": sl_price, "複利總報酬": f"{ret * 100:+.2f}%", 
                 "歷史勝率": f"{win * 100:.1f}%", "交易次數": trades, "獲利因子": pf
             })
-        return stock_reports, stock_details
-    except Exception:
+        return stock_reports, stock_details, "SUCCESS"
+    except Exception as e:
+        err_msg = f"EXCEPTION: {type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
         stock_reports = []
         for strat in strategies:
             stock_reports.append({
@@ -444,13 +446,14 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                 "ATR動態防守價": "-", "複利總報酬": "0.0%", 
                 "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
             })
-        return stock_reports, {}
+        return stock_reports, {}, err_msg
 
 # --- 7. Session State 記憶庫 ---
 if "calculated" not in st.session_state:
     st.session_state.calculated = False
     st.session_state.final_df = None
     st.session_state.detail_db = {}
+    st.session_state.debug_logs = []
 
 # --- 8. 頂部總經抬頭控制卡 ---
 col_v1, col_v2, col_v3 = st.columns(3)
@@ -459,33 +462,50 @@ col_v2.metric("S&P 500 大盤位階", "年線之上 (多頭)" if is_spy_bull els
 col_v3.metric("系統動態總經姿態", market_posture)
 st.divider()
 
-if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎 (⚡ 分批防封鎖超速版)", use_container_width=True):
-    with st.spinner(f"正在為您掃描 {len(ticker_list)} 檔美股，採取 25 檔小批連線防封鎖..."):
-        # 🛠️ 核心靈魂：將 140+ 檔股票切成 25 檔一小批（分 5~6 次下載，幾秒搞定，100% 防 Yahoo 限流 429）
-        chunk_size = 25
-        ticker_chunks = [ticker_list[i:i + chunk_size] for i in range(0, len(ticker_list), chunk_size)]
-        
-        master_report = []
-        strategies = ["A: 激進動能型", "B: 穩健波段型", "C: 槓桿強勢型", "D: 均值回歸抄底型", "E: 價量動能流跟隨型"]
+if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎 (🐛 含診斷模式)", use_container_width=True):
+    st.session_state.debug_logs = []
+    logs = st.session_state.debug_logs
+    logs.append(f"🟢 [1] 解析股票代號清單 (共 {len(ticker_list)} 檔): {ticker_list[:5]}...")
+    logs.append(f"🟢 [2] 總經環境擷取狀態: {macro_status} | 歷史總經筆數: {len(df_macro)}")
 
-        for chunk in ticker_chunks:
-            try:
-                df_chunk = yf.download(chunk, period="2y", progress=False, threads=True)
-            except Exception:
-                df_chunk = pd.DataFrame()
+    chunk_size = 25
+    ticker_chunks = [ticker_list[i:i + chunk_size] for i in range(0, len(ticker_list), chunk_size)]
+    
+    master_report = []
+    strategies = ["A: 激進動能型", "B: 穩健波段型", "C: 槓桿強勢型", "D: 均值回歸抄底型", "E: 價量動能流跟隨型"]
 
-            for ticker in chunk:
-                df_single = extract_stock_from_chunk(df_chunk, ticker)
-                s_reports, s_details = process_single_stock_us(
-                    ticker, df_single, cloud_names_dict, backtest_days, df_macro, strategies
-                )
-                if s_reports:
-                    master_report.extend(s_reports)
-                    st.session_state.detail_db.update(s_details)
+    for idx_chunk, chunk in enumerate(ticker_chunks):
+        logs.append(f"📡 [3.{idx_chunk+1}] 正在向 Yahoo 批量下載第 {idx_chunk+1} 批 (代號: {chunk[:3]}...)")
+        try:
+            df_chunk = yf.download(chunk, period="2y", progress=False, threads=True)
+            logs.append(f"   ➔ 下載完成! df_chunk Shape: {df_chunk.shape} | 是否為空: {df_chunk.empty}")
+            if isinstance(df_chunk.columns, pd.MultiIndex):
+                logs.columns_info = f"   ➔ MultiIndex Levels: {df_chunk.columns.nlevels} | Level 0 values: {df_chunk.columns.levels[0][:3]}"
+                logs.append(logs.columns_info)
+        except Exception as e:
+            df_chunk = pd.DataFrame()
+            logs.append(f"   ❌ 第 {idx_chunk+1} 批下載爆發 Exception: {str(e)}")
 
-        st.session_state.final_df = pd.DataFrame(master_report)
-        st.session_state.calculated = True
-        st.success(f"🎉 掃描完成！已成功對齊 100% 美股清單（共 {len(st.session_state.final_df)} 筆評估報告）！")
+        for ticker in chunk:
+            df_single = extract_stock_from_chunk(df_chunk, ticker)
+            s_reports, s_details, err_code = process_single_stock_us(
+                ticker, df_single, cloud_names_dict, backtest_days, df_macro, strategies
+            )
+            if err_code != "SUCCESS":
+                logs.append(f"   ⚠️ 個股 [{ticker}] 運算異常原因: {err_code}")
+            
+            if s_reports:
+                master_report.extend(s_reports)
+                st.session_state.detail_db.update(s_details)
+
+    st.session_state.final_df = pd.DataFrame(master_report)
+    st.session_state.calculated = True
+    st.success(f"🎉 掃描完成！已呈現 {len(st.session_state.final_df)} 筆報告！")
+
+# 🐛 系統診斷 Log 展示區塊
+if st.session_state.get("debug_logs"):
+    with st.expander("🐛 系統診斷日誌 (請複製此區塊文字貼給 AI 進行秒級除錯)", expanded=True):
+        st.code("\n".join(st.session_state.debug_logs), language="text")
 
 # --- 9. 網頁分頁系統 ---
 tab_v07, tab_debug = st.tabs(["📊 倉位動作與機構級統計總表", "🔍 歷史回測驗證"])
