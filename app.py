@@ -9,9 +9,9 @@ import traceback
 from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="美股雷達 V07.3 (P3解包修復版)", page_icon="🔮", layout="wide")
-st.title("🔮 美股量化沙盒 V07.3 (P3 機構級統計與全防護版)")
-st.markdown("已完成 **P3 評估重構與解包 Bug 修正**：實裝 **Expectancy 期望值**、**CAGR**、**MDD**、**Sharpe** 與 **MAE/MFE 診斷**。")
+st.set_page_config(page_title="🔮 美股量化沙盒 V07.0 (正式版)", page_icon="🔮", layout="wide")
+st.title("🔮 美股量化投資沙盒 V07.0 (機構級多因子無偏誤量化系統)")
+st.caption("🚀 已實裝 **V07 核心機構架構**：消除前視偏誤、T+1開盤成交、ATR動態停損、RS20相對強弱Alpha與 Expectancy/CAGR/MDD/Sharpe 機構級統計診斷。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -42,7 +42,6 @@ ticker_list = list(dict.fromkeys(temp_raw_list))
 backtest_days = st.sidebar.slider("歷史回測天數設定", min_value=100, max_value=500, value=300, step=50)
 enable_fcf_filter = st.sidebar.checkbox("🛡️ 啟用「FCF 負值」強制攔截", value=True)
 
-# 🛠️ 萬能欄位清洗函式
 def clean_and_flatten_df(df):
     if df is None or df.empty:
         return pd.DataFrame()
@@ -73,7 +72,6 @@ def clean_and_flatten_df(df):
     df.columns = new_cols
     return df
 
-# 🛠️ 單股抽取函式
 def extract_stock_from_chunk(df_chunk, ticker):
     if df_chunk is None or df_chunk.empty:
         return pd.DataFrame()
@@ -248,7 +246,6 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
         open_p, high_p, low_p, close_p = opens[i], highs[i], lows[i], closes[i]
         
         vix_y, bull_y = vixs[i-1], m_bulls[i-1]
-        # 🛠️ 核心修復：修正 else 賦值少寫 dip_pct 的 Bug
         if vix_y >= 25 or not bull_y: rsi_max, vol_mult, dip_pct = 65, 1.50, -0.15
         elif vix_y <= 15 and bull_y: rsi_max, vol_mult, dip_pct = 75, 1.05, -0.08
         else: rsi_max, vol_mult, dip_pct = 70, 1.20, -0.10
@@ -386,7 +383,6 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             f"{expectancy*100:+.2f}%", f"{cagr*100:+.1f}%", f"{mdd*100:.1f}%", 
             f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%")
 
-# ⚡ 單個股票處理 Worker
 def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macro_data, strategies):
     try:
         if df_stock is None or df_stock.empty or len(df_stock) < 10:
@@ -401,7 +397,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                     "ATR動態防守價": "-", "複利總報酬": "0.0%", 
                     "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
                 })
-            return stock_reports, {}, "K線數據為空或長度不足 (<10)"
+            return stock_reports, {}
 
         df_stock = clean_and_flatten_df(df_stock)
         df_stock = calculate_indicators(df_stock)
@@ -432,9 +428,8 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                 "ATR動態防守價": sl_price, "複利總報酬": f"{ret * 100:+.2f}%", 
                 "歷史勝率": f"{win * 100:.1f}%", "交易次數": trades, "獲利因子": pf
             })
-        return stock_reports, stock_details, "SUCCESS"
-    except Exception as e:
-        err_msg = f"EXCEPTION: {type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
+        return stock_reports, stock_details
+    except Exception:
         stock_reports = []
         for strat in strategies:
             stock_reports.append({
@@ -446,7 +441,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                 "ATR動態防守價": "-", "複利總報酬": "0.0%", 
                 "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
             })
-        return stock_reports, {}, err_msg
+        return stock_reports, {}
 
 # --- 7. Session State 記憶庫 ---
 if "calculated" not in st.session_state:
@@ -462,7 +457,7 @@ col_v2.metric("S&P 500 大盤位階", "年線之上 (多頭)" if is_spy_bull els
 col_v3.metric("系統動態總經姿態", market_posture)
 st.divider()
 
-if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎", use_container_width=True):
+if st.button("🚀 啟動 V07.0 美股全自動多因子掃描引擎", use_container_width=True):
     st.session_state.debug_logs = []
     logs = st.session_state.debug_logs
     logs.append(f"🟢 [1] 解析股票代號清單 (共 {len(ticker_list)} 檔): {ticker_list[:5]}...")
@@ -485,12 +480,9 @@ if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎", use_conta
 
         for ticker in chunk:
             df_single = extract_stock_from_chunk(df_chunk, ticker)
-            s_reports, s_details, err_code = process_single_stock_us(
+            s_reports, s_details = process_single_stock_us(
                 ticker, df_single, cloud_names_dict, backtest_days, df_macro, strategies
             )
-            if err_code != "SUCCESS":
-                logs.append(f"   ⚠️ 個股 [{ticker}] 運算異常原因: {err_code}")
-            
             if s_reports:
                 master_report.extend(s_reports)
                 st.session_state.detail_db.update(s_details)
@@ -499,7 +491,7 @@ if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎", use_conta
     st.session_state.calculated = True
     st.success(f"🎉 掃描完成！已呈現 {len(st.session_state.final_df)} 筆報告！")
 
-# 🐛 系統診斷 Log 展示區塊
+# 🐛 系統診斷 Log 展示區塊 (預設折疊)
 if st.session_state.get("debug_logs"):
     with st.expander("🐛 系統診斷日誌", expanded=False):
         st.code("\n".join(st.session_state.debug_logs), language="text")
@@ -511,13 +503,14 @@ with tab_v07:
     if st.session_state.calculated:
         st.dataframe(st.session_state.final_df, use_container_width=True, hide_index=True)
     else:
-        st.info("💡 請按下上方「🚀 啟動 V07.3 美股全自動多因子掃描引擎」按鈕開始運算。")
+        st.info("💡 請按下上方「🚀 啟動 V07.0 美股全自動多因子掃描引擎」按鈕開始運算。")
 
 with tab_debug:
     if st.session_state.calculated:
         col_tk, col_st = st.columns(2)
-        with col_tk: debug_ticker = st.selectbox("🎯 選擇美股代號", ticker_list)
-        with col_st: debug_strat = st.selectbox("🔮 選擇策略", ["A: 激進動能型", "B: 穩健波段型", "C: 槓桿強勢型", "D: 均值回歸抄底型", "E: 價量動能流跟隨型"])
+        # 加入 key 綁定以避免第一次選取時觸發頁面跳轉
+        with col_tk: debug_ticker = st.selectbox("🎯 選擇美股代號", ticker_list, key="us_debug_tk")
+        with col_st: debug_strat = st.selectbox("🔮 選擇策略", ["A: 激進動能型", "B: 穩健波段型", "C: 槓桿強勢型", "D: 均值回歸抄底型", "E: 價量動能流跟隨型"], key="us_debug_st")
         db_key = (debug_ticker, debug_strat)
         if db_key in st.session_state.detail_db:
             data_pack = st.session_state.detail_db[db_key]
@@ -526,7 +519,7 @@ with tab_debug:
             fig.add_trace(go.Scatter(x=v_df.index, y=v_df['Close'], mode='lines', name='收盤價', line=dict(color='lightgrey', width=1.5)))
             if len(buys) > 0: fig.add_trace(go.Scatter(x=[b[0] for b in buys], y=[b[1] for b in buys], mode='markers', name='🟢 BUY (T+1成交)', marker=dict(symbol='triangle-up', size=12, color='#00FF00')))
             if len(sells) > 0: fig.add_trace(go.Scatter(x=[s[0] for s in sells], y=[s[1] for s in sells], mode='markers', name='🔴 SELL (ATR防守離場)', marker=dict(symbol='triangle-down', size=12, color='#FF0000')))
-            fig.update_layout(title=f"<b>美股 {debug_ticker} - {debug_strat} V07.3 軌跡圖</b>", template="plotly_dark")
+            fig.update_layout(title=f"<b>美股 {debug_ticker} - {debug_strat} V07.0 軌跡圖</b>", template="plotly_dark")
             st.plotly_chart(fig, use_container_width=True)
             if not logs_df.empty: st.dataframe(logs_df, use_container_width=True, hide_index=True)
     else: st.info("💡 請先啟動掃描引擎。")
