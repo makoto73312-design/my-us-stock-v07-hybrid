@@ -9,9 +9,9 @@ import traceback
 from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="美股雷達 V07.3 (P3完美修復版)", page_icon="🔮", layout="wide")
+st.set_page_config(page_title="美股雷達 V07.3 (P3解包修復版)", page_icon="🔮", layout="wide")
 st.title("🔮 美股量化沙盒 V07.3 (P3 機構級統計與全防護版)")
-st.markdown("已完成 **P3 評估重構與 Log 診斷除錯**：實裝 **Expectancy 期望值**、**CAGR**、**MDD**、**Sharpe** 與 **MAE/MFE 診斷**。")
+st.markdown("已完成 **P3 評估重構與解包 Bug 修正**：實裝 **Expectancy 期望值**、**CAGR**、**MDD**、**Sharpe** 與 **MAE/MFE 診斷**。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -248,9 +248,10 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
         open_p, high_p, low_p, close_p = opens[i], highs[i], lows[i], closes[i]
         
         vix_y, bull_y = vixs[i-1], m_bulls[i-1]
+        # 🛠️ 核心修復：修正 else 賦值少寫 dip_pct 的 Bug
         if vix_y >= 25 or not bull_y: rsi_max, vol_mult, dip_pct = 65, 1.50, -0.15
         elif vix_y <= 15 and bull_y: rsi_max, vol_mult, dip_pct = 75, 1.05, -0.08
-        else: rsi_max, vol_mult = 70, 1.20, -0.10
+        else: rsi_max, vol_mult, dip_pct = 70, 1.20, -0.10
 
         atr_p = atr_vals[i-1]
         atr_multiplier = 2.0 if "C:" in strategy_name else 1.5
@@ -478,10 +479,6 @@ if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎", use_conta
         try:
             df_chunk = yf.download(chunk, period="2y", progress=False, threads=True)
             logs.append(f"   ➔ 下載完成! df_chunk Shape: {df_chunk.shape} | 是否為空: {df_chunk.empty}")
-            if isinstance(df_chunk.columns, pd.MultiIndex):
-                # 🛠️ 核心修正：正確寫入診斷紀錄
-                col_info = f"   ➔ MultiIndex Levels: {df_chunk.columns.nlevels} | Level 0 values: {list(df_chunk.columns.levels[0][:3])}"
-                logs.append(col_info)
         except Exception as e:
             df_chunk = pd.DataFrame()
             logs.append(f"   ❌ 第 {idx_chunk+1} 批下載爆發 Exception: {str(e)}")
