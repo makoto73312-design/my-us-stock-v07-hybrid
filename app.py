@@ -39,8 +39,18 @@ tickers_input = st.sidebar.text_area("📡 當前雲端同步清單", default_ti
 temp_raw_list = [t.strip().upper() for t in re.split(r'[\n\r,\s]+', tickers_input) if t.strip()]
 ticker_list = list(dict.fromkeys(temp_raw_list))
 
+# 🛠️ 核心修復：預先註冊 UI 選單狀態變數，防止首次點擊跳回分頁 1
+if ticker_list:
+    if "us_debug_tk" not in st.session_state:
+        st.session_state["us_debug_tk"] = ticker_list[0]
+    if "us_debug_st" not in st.session_state:
+        st.session_state["us_debug_st"] = "A: 激進動能型"
+
 backtest_days = st.sidebar.slider("歷史回測天數設定", min_value=100, max_value=500, value=300, step=50)
 enable_fcf_filter = st.sidebar.checkbox("🛡️ 啟用「FCF 負值」強制攔截", value=True)
+
+st.sidebar.divider()
+show_debug_log = st.sidebar.checkbox("🐛 顯示系統診斷日誌", value=False)
 
 def clean_and_flatten_df(df):
     if df is None or df.empty:
@@ -383,6 +393,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             f"{expectancy*100:+.2f}%", f"{cagr*100:+.1f}%", f"{mdd*100:.1f}%", 
             f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%")
 
+# ⚡ 單個股票處理 Worker
 def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macro_data, strategies):
     try:
         if df_stock is None or df_stock.empty or len(df_stock) < 10:
@@ -491,9 +502,9 @@ if st.button("🚀 啟動 V07.0 美股全自動多因子掃描引擎", use_conta
     st.session_state.calculated = True
     st.success(f"🎉 掃描完成！已呈現 {len(st.session_state.final_df)} 筆報告！")
 
-# 🐛 系統診斷 Log 展示區塊 (預設折疊)
-if st.session_state.get("debug_logs"):
-    with st.expander("🐛 系統診斷日誌", expanded=False):
+# 🐛 系統診斷 Log 區塊（若開啟開關，顯現在側邊欄底部）
+if show_debug_log and st.session_state.get("debug_logs"):
+    with st.sidebar.expander("🐛 系統診斷日誌", expanded=True):
         st.code("\n".join(st.session_state.debug_logs), language="text")
 
 # --- 9. 網頁分頁系統 ---
@@ -508,7 +519,7 @@ with tab_v07:
 with tab_debug:
     if st.session_state.calculated:
         col_tk, col_st = st.columns(2)
-        # 加入 key 綁定以避免第一次選取時觸發頁面跳轉
+        # 🛠️ 核心修復：正確綁定 key 避免點選觸發分頁跳轉
         with col_tk: debug_ticker = st.selectbox("🎯 選擇美股代號", ticker_list, key="us_debug_tk")
         with col_st: debug_strat = st.selectbox("🔮 選擇策略", ["A: 激進動能型", "B: 穩健波段型", "C: 槓桿強勢型", "D: 均值回歸抄底型", "E: 價量動能流跟隨型"], key="us_debug_st")
         db_key = (debug_ticker, debug_strat)
