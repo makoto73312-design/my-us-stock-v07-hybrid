@@ -8,9 +8,9 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="美股雷達 V07.0 (P0無偏誤修正版)", page_icon="🔮", layout="wide")
+st.set_page_config(page_title="美股雷達 V07.0 (P0完全修復版)", page_icon="🔮", layout="wide")
 st.title("🔮 美股量化沙盒 V07.0 (P0 消除前視偏誤與真實複利回測版)")
-st.markdown("已完成 **P0 核心重構與資料對齊修復**：排除「同一 K 線偷看未來」、「當天看收盤當天成交」偏誤，修復欄位自動清洗機制，並導入 **T+1 開盤成交、真實交易成本與複利資金曲線**。")
+st.markdown("已完成 **P0 核心重構與全欄位邏輯修復**：排除「同一 K 線偷看未來」、「當天看收盤當天成交」偏誤，修復欄位智慧洗淨機制，並導入 **T+1 開盤成交、真實交易成本與複利資金曲線**。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -42,7 +42,7 @@ backtest_days = st.sidebar.slider("歷史回測天數設定", min_value=100, max
 enable_fcf_filter = st.sidebar.checkbox("🛡️ 啟用「自由現金流 > 0」安全過濾", value=True)
 enable_earnings_shield = st.sidebar.checkbox("💣 啟用「3 天內發布財報」強制避險", value=True)
 
-# 🛠️ 核心修正：多層欄位自動智慧扁平化函式
+# 🛠️ 精準欄位處理函式：只對基礎 OHLCV 轉大寫，保留自訂指標的大小寫
 def fix_yf_columns(df):
     if df is None or df.empty:
         return df
@@ -57,7 +57,19 @@ def fix_yf_columns(df):
             df.columns = df.columns.get_level_values(found_level)
         else:
             df.columns = [c[0] if isinstance(c, tuple) else c for c in df.columns]
-    df.columns = [str(c).title() for c in df.columns]
+            
+    standard_map = {
+        'open': 'Open', 'high': 'High', 'low': 'Low', 
+        'close': 'Close', 'volume': 'Volume', 'adj close': 'Adj Close'
+    }
+    new_cols = []
+    for c in df.columns:
+        c_str = str(c)
+        if c_str.lower() in standard_map:
+            new_cols.append(standard_map[c_str.lower()])
+        else:
+            new_cols.append(c_str)
+    df.columns = new_cols
     return df
 
 # --- 3. 🌐 V07 美股大環境與總經雷達 ---
@@ -199,7 +211,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
 
         stop_loss_pct = 0.05 if "A:" in strategy_name else 0.075
 
-        # A. 盤中交易執行 (T+1 開盤成交)
+        # A. 盤中交易執行 (T+1 開盤價)
         if not has_position:
             if pending_buy_signal:
                 has_position = True
@@ -297,7 +309,7 @@ def process_single_stock_us(ticker, cloud_dict, backtest_days, df_macro_data, st
                 "複利總報酬率": f"{ret * 100:+.2f}%", "歷史勝率": f"{win * 100:.1f}%", "交易次數": trades, "獲利因子": pf, "推薦指數": stars
             })
         return stock_reports, stock_details, [], {}
-    except Exception:
+    except Exception as e:
         return [], {}, [], {}
 
 # --- 7. Session State 記憶庫 ---
