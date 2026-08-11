@@ -4,13 +4,14 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
+import re
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="美股雷達 V07.3 (P3量化評估版)", page_icon="🔮", layout="wide")
+st.set_page_config(page_title="美股雷達 V07.3 (P3 Bug完全修復版)", page_icon="🔮", layout="wide")
 st.title("🔮 美股量化沙盒 V07.3 (P3 機構級統計與 MAE/MFE 風控評估版)")
-st.markdown("已完成 **P3 量化評估重構**：已實裝 **Expectancy 期望值**、**CAGR 年化報酬**、**MDD 最大回撤**、**Sharpe 夏普比率** 與 **MAE/MFE 浮動風控診斷**。")
+st.markdown("已完成 **P3 評估重構與 Bug 完全修復**：修復換行清單解析與欄位解包問題，已實裝 **Expectancy 期望值**、**CAGR 年化報酬**、**MDD 最大回撤**、**Sharpe 夏普比率** 與 **MAE/MFE 診斷**。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -35,7 +36,8 @@ def get_tickers_from_sheet(url):
 default_tickers, cloud_names_dict = get_tickers_from_sheet(GSHEET_URL)
 tickers_input = st.sidebar.text_area("📡 當前雲端同步清單", default_tickers, height=100)
 
-temp_raw_list = [t.strip().upper() for t in tickers_input.split(',') if t.strip()]
+# 🛠️ 修復 1：改用正則表達式切分，相容逗號、換行與空格
+temp_raw_list = [t.strip().upper() for t in re.split(r'[\n\r,\s]+', tickers_input) if t.strip()]
 ticker_list = list(dict.fromkeys(temp_raw_list))
 
 backtest_days = st.sidebar.slider("歷史回測天數設定", min_value=100, max_value=500, value=300, step=50)
@@ -187,8 +189,11 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     df_st.index = pd.to_datetime(pd.to_datetime(df_st.index).date)
     
     valid_df = df_st.join(df_macro_input[['VIX', 'Market_Bull', 'SPY_Close']], how='left').ffill().bfill().dropna().tail(days + 1).copy()
+    
+    # 🛠️ 修復 2：補齊為正確的 23 個回傳欄位
     if len(valid_df) < 10:
-        return "⚠️ 數據不足", 0.0, 0.0, 0, "0.00", "D級", "🛑 數據不足", "-", "-", "-", [], [], [], valid_df, 0.0, 0.0, "0.0%", "0.0%", "0.0%", "0.00", "0.0%", "0.0%"
+        return ("⚠️ 數據不足", 0.0, 0.0, 0, "0.00", "D級", "🛑 數據不足", "-", "-", "-", 
+                [], [], [], valid_df, 0.0, 0.0, "0.0%", "0.0%", "0.0%", "0.0%", "0.00", "0.0%", "0.0%")
 
     valid_df['Stock_Ret20'] = valid_df['Close'].pct_change(20)
     valid_df['Macro_Ret20'] = valid_df['SPY_Close'].pct_change(20)
@@ -301,7 +306,6 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             elif "E:" in strategy_name:
                 if pv_flow_p > q80_p and pv_flow_p > 0 and c_p > m50_p and m50_p >= m50_y and rs_p > 0: pending_buy_signal = True
 
-    # --------------------- P3 專業量化統計運算 ---------------------
     total_trades = len(all_returns)
     win_trades = len(win_returns)
     total_return = capital - 1.0
@@ -399,7 +403,7 @@ def process_single_stock_us(ticker, cloud_dict, backtest_days, df_macro_data, st
                 "歷史勝率": f"{win * 100:.1f}%", "交易次數": trades, "獲利因子": pf
             })
         return stock_reports, stock_details, [], {}
-    except Exception:
+    except Exception as e:
         return [], {}, [], {}
 
 # --- 7. Session State 記憶庫 ---
@@ -415,7 +419,7 @@ col_v2.metric("S&P 500 大盤位階", "年線之上 (多頭)" if is_spy_bull els
 col_v3.metric("系統動態總經姿態", market_posture)
 st.divider()
 
-if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎 (⚡ P3 量化評估升級版)", use_container_width=True):
+if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎 (⚡ P3 量化評估修復版)", use_container_width=True):
     with st.spinner("正在啟動 ThreadPoolExecutor 多線程引擎進行 P3 量化矩陣運算..."):
         master_report, strategies = [], ["A: 激進動能型", "B: 穩健波段型", "C: 槓桿強勢型", "D: 均值回歸抄底型", "E: 價量動能流跟隨型"]
         futures = []
