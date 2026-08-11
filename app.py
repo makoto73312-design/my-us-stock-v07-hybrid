@@ -39,9 +39,9 @@ tickers_input = st.sidebar.text_area("📡 當前雲端同步清單", default_ti
 temp_raw_list = [t.strip().upper() for t in re.split(r'[\n\r,\s]+', tickers_input) if t.strip()]
 ticker_list = list(dict.fromkeys(temp_raw_list))
 
-# 🛠️ 核心修復：預先註冊 UI 選單狀態變數，防止首次點擊跳回分頁 1
+# 🛠️ 徹底對策：強效預先註冊與成員安全防呆，徹底防止美股首次點選跳回分頁 1
 if ticker_list:
-    if "us_debug_tk" not in st.session_state:
+    if "us_debug_tk" not in st.session_state or st.session_state["us_debug_tk"] not in ticker_list:
         st.session_state["us_debug_tk"] = ticker_list[0]
     if "us_debug_st" not in st.session_state:
         st.session_state["us_debug_st"] = "A: 激進動能型"
