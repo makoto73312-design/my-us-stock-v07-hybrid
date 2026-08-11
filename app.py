@@ -6,12 +6,11 @@ import plotly.graph_objects as go
 import requests
 import re
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="美股雷達 V07.3 (P3 Bug完全修復版)", page_icon="🔮", layout="wide")
-st.title("🔮 美股量化沙盒 V07.3 (P3 機構級統計與 MAE/MFE 風控評估版)")
-st.markdown("已完成 **P3 評估重構與 Bug 完全修復**：修復換行清單解析與欄位解包問題，已實裝 **Expectancy 期望值**、**CAGR 年化報酬**、**MDD 最大回撤**、**Sharpe 夏普比率** 與 **MAE/MFE 診斷**。")
+st.set_page_config(page_title="美股雷達 V07.3 (P3批量穩健版)", page_icon="🔮", layout="wide")
+st.title("🔮 美股量化沙盒 V07.3 (P3 批量防封鎖與完整量化評估版)")
+st.markdown("已完成 **P3 評估重構與 API 防封鎖修復**：改採一次性打包下載 (Batch Download)，解決 Yahoo 限流問題，實裝 **Expectancy 期望值**、**CAGR**、**MDD**、**Sharpe** 與 **MAE/MFE 診斷**。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -34,15 +33,15 @@ def get_tickers_from_sheet(url):
         return "NVDA, AAPL, TSLA, MSFT, AMD", {}
 
 default_tickers, cloud_names_dict = get_tickers_from_sheet(GSHEET_URL)
-tickers_input = st.sidebar.text_area("📡 當前雲端同步清單", default_tickers, height=100)
+tickers_input = st.sidebar.text_area("📡 當前雲端同步清單", default_tickers, height=120)
 
-# 🛠️ 修復 1：改用正則表達式切分，相容逗號、換行與空格
 temp_raw_list = [t.strip().upper() for t in re.split(r'[\n\r,\s]+', tickers_input) if t.strip()]
 ticker_list = list(dict.fromkeys(temp_raw_list))
 
 backtest_days = st.sidebar.slider("歷史回測天數設定", min_value=100, max_value=500, value=300, step=50)
 enable_fcf_filter = st.sidebar.checkbox("🛡️ 啟用「FCF 負值」強制攔截", value=True)
 
+# 🛠️ 專用欄位清洗函式
 def fix_yf_columns(df):
     if df is None or df.empty:
         return df
@@ -76,16 +75,14 @@ def fix_yf_columns(df):
 @st.cache_data(ttl=1800)
 def fetch_us_macro_dataframe():
     try:
-        vix_raw = yf.Ticker("^VIX").history(period="2y")
-        spy_raw = yf.Ticker("SPY").history(period="2y")
-        
-        vix_c = fix_yf_columns(vix_raw)[['Close']].rename(columns={'Close': 'VIX'})
-        spy_c = fix_yf_columns(spy_raw)[['Close']].rename(columns={'Close': 'SPY_Close'})
+        macro_raw = yf.download(["^VIX", "SPY"], period="2y", progress=False)
+        vix_c = fix_yf_columns(macro_raw['Close']['^VIX'].to_frame())[['Close']].rename(columns={'Close': 'VIX'})
+        spy_c = fix_yf_columns(macro_raw['Close']['SPY'].to_frame())[['Close']].rename(columns={'Close': 'SPY_Close'})
         
         vix_c.index = pd.to_datetime(pd.to_datetime(vix_c.index).date)
         spy_c.index = pd.to_datetime(pd.to_datetime(spy_c.index).date)
 
-        spy_c['SPY_MA200'] = spy_c['SPY_Close'].rolling(200).mean()
+        spy_c['SPY_MA200'] = spy_c['SPY_Close'].rolling(200).mean().fillna(spy_c['SPY_Close'])
         spy_c['Market_Bull'] = spy_c['SPY_Close'] >= spy_c['SPY_MA200']
         
         df_macro = spy_c.join(vix_c, how='left').ffill().bfill().dropna()
@@ -190,7 +187,6 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     
     valid_df = df_st.join(df_macro_input[['VIX', 'Market_Bull', 'SPY_Close']], how='left').ffill().bfill().dropna().tail(days + 1).copy()
     
-    # 🛠️ 修復 2：補齊為正確的 23 個回傳欄位
     if len(valid_df) < 10:
         return ("⚠️ 數據不足", 0.0, 0.0, 0, "0.00", "D級", "🛑 數據不足", "-", "-", "-", 
                 [], [], [], valid_df, 0.0, 0.0, "0.0%", "0.0%", "0.0%", "0.0%", "0.00", "0.0%", "0.0%")
@@ -367,11 +363,50 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             f"{expectancy*100:+.2f}%", f"{cagr*100:+.1f}%", f"{mdd*100:.1f}%", 
             f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%")
 
-# ⚡ 多線程 Worker
-def process_single_stock_us(ticker, cloud_dict, backtest_days, df_macro_data, strategies):
+# 🛠️ 輔助函式：從批量下載數據中獨立抽離單一股票
+def extract_stock_df(df_batch, ticker):
+    if df_batch is None or df_batch.empty:
+        return pd.DataFrame()
+    if not isinstance(df_batch.columns, pd.MultiIndex):
+        standard_cols = [str(c).title() for c in df_batch.columns]
+        if 'Close' in standard_cols:
+            return df_batch.copy()
+        return pd.DataFrame()
+    if ticker in df_batch.columns.levels[0]:
+        try:
+            df_sub = df_batch[ticker].copy()
+            if not df_sub.dropna(how='all').empty:
+                return df_sub.dropna(how='all')
+        except Exception:
+            pass
+    for lvl in range(df_batch.columns.nlevels):
+        if ticker in df_batch.columns.get_level_values(lvl):
+            try:
+                df_sub = df_batch.xs(ticker, level=lvl, axis=1).copy()
+                if not df_sub.dropna(how='all').empty:
+                    return df_sub.dropna(how='all')
+            except Exception:
+                pass
+    return pd.DataFrame()
+
+# ⚡ 單一股票處理算子 (防呆全保護)
+def process_single_stock_us(ticker, df_stock_raw, cloud_dict, backtest_days, df_macro_data, strategies):
     try:
-        df_stock = yf.download(ticker, period="2y", progress=False)
-        if df_stock.empty: return [], {}, [], {}
+        df_stock = extract_stock_df(df_stock_raw, ticker)
+        if df_stock.empty or len(df_stock) < 10:
+            stock_reports = []
+            for strat in strategies:
+                stock_reports.append({
+                    "股票代號": ticker, "當前市價": "-", "策略手法": strat,
+                    "倉位狀態": "🛑 數據不足", "期望值 Expectancy": "0.0%",
+                    "綜合評級": "D級", "大盤 Alpha (RS20)": "0.0%", "年化 CAGR": "0.0%", 
+                    "最大回撤 MDD": "0.0%", "夏普比率 Sharpe": "0.00", "平均浮虧 MAE": "0.0%", 
+                    "平均浮盈 MFE": "0.0%", "建議進場價": "-", "未實現損益": "-", 
+                    "ATR動態防守價": "-", "複利總報酬": "0.0%", 
+                    "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
+                })
+            return stock_reports, {}
+
         df_stock = fix_yf_columns(df_stock)
         df_stock = calculate_indicators(df_stock)
         
@@ -390,7 +425,6 @@ def process_single_stock_us(ticker, cloud_dict, backtest_days, df_macro_data, st
             )
             
             stock_details[(ticker, strat)] = {"logs": pd.DataFrame(t_logs), "buys": p_buys, "sells": p_sells, "v_df": v_df}
-            earn_warn = "💣 財報前夕(謹慎)" if fund_info["near_earnings"] else "🟢 正常"
             fcf_disp = fund_info["fcf"] if fund_info["fcf_status"] != "UNKNOWN" else "❓ 數據缺失"
 
             stock_reports.append({
@@ -402,9 +436,20 @@ def process_single_stock_us(ticker, cloud_dict, backtest_days, df_macro_data, st
                 "ATR動態防守價": sl_price, "複利總報酬": f"{ret * 100:+.2f}%", 
                 "歷史勝率": f"{win * 100:.1f}%", "交易次數": trades, "獲利因子": pf
             })
-        return stock_reports, stock_details, [], {}
-    except Exception as e:
-        return [], {}, [], {}
+        return stock_reports, stock_details
+    except Exception:
+        stock_reports = []
+        for strat in strategies:
+            stock_reports.append({
+                "股票代號": ticker, "當前市價": "-", "策略手法": strat,
+                "倉位狀態": "🛑 數據不足", "期望值 Expectancy": "0.0%",
+                "綜合評級": "D級", "大盤 Alpha (RS20)": "0.0%", "年化 CAGR": "0.0%", 
+                "最大回撤 MDD": "0.0%", "夏普比率 Sharpe": "0.00", "平均浮虧 MAE": "0.0%", 
+                "平均浮盈 MFE": "0.0%", "建議進場價": "-", "未實現損益": "-", 
+                "ATR動態防守價": "-", "複利總報酬": "0.0%", 
+                "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
+            })
+        return stock_reports, {}
 
 # --- 7. Session State 記憶庫 ---
 if "calculated" not in st.session_state:
@@ -419,24 +464,27 @@ col_v2.metric("S&P 500 大盤位階", "年線之上 (多頭)" if is_spy_bull els
 col_v3.metric("系統動態總經姿態", market_posture)
 st.divider()
 
-if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎 (⚡ P3 量化評估修復版)", use_container_width=True):
-    with st.spinner("正在啟動 ThreadPoolExecutor 多線程引擎進行 P3 量化矩陣運算..."):
+if st.button("🚀 啟動 V07.3 美股全自動多因子掃描引擎 (⚡ 一次性批量下載版)", use_container_width=True):
+    with st.spinner(f"正在批量下載 {len(ticker_list)} 檔美股 K 線資料，請稍候..."):
+        # 🛠️ 核心突破：一次性打包下載所有清單個股 (避免 10 個平行線程被 Yahoo 限流)
+        try:
+            df_all_stocks = yf.download(ticker_list, period="2y", progress=False)
+        except Exception:
+            df_all_stocks = pd.DataFrame()
+
         master_report, strategies = [], ["A: 激進動能型", "B: 穩健波段型", "C: 槓桿強勢型", "D: 均值回歸抄底型", "E: 價量動能流跟隨型"]
-        futures = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            for ticker in ticker_list:
-                f = executor.submit(process_single_stock_us, ticker, cloud_names_dict, backtest_days, df_macro, strategies)
-                futures.append(f)
-                
-        for f in futures:
-            s_reports, s_details, _, _ = f.result()
+        
+        for ticker in ticker_list:
+            s_reports, s_details = process_single_stock_us(
+                ticker, df_all_stocks, cloud_names_dict, backtest_days, df_macro, strategies
+            )
             if s_reports:
                 master_report.extend(s_reports)
                 st.session_state.detail_db.update(s_details)
                 
         st.session_state.final_df = pd.DataFrame(master_report)
         st.session_state.calculated = True
-        st.success("📊 V07.3 美股機構級統計與 MAE/MFE 評估計算完成！")
+        st.success(f"📊 已成功完成 {len(ticker_list)} 檔美股量化評估與數據驗證！")
 
 # --- 9. 網頁分頁系統 ---
 tab_v07, tab_debug = st.tabs(["📊 倉位動作與機構級統計總表", "🔍 歷史回測驗證"])
