@@ -10,8 +10,8 @@ from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
 st.set_page_config(page_title="🔮 美股量化沙盒 V07.1", page_icon="🔮", layout="wide")
-st.title("🔮 美股量化投資沙盒 V07.1 (戰術分類與機構級量化系統)")
-st.caption("🚀 **V06 經典戰術分類排版 + V07 機構量化引擎**：按 A~E 戰術分頁選股，頁底保留全標的總表，整合七維矩陣與布林通道。")
+st.title("🔮 美股量化投資沙盒 V07.1 (倉位分類與防守賣出修復版)")
+st.caption("🚀 已實裝 **V06 倉位狀態分類排版 + V07 機構量化引擎**：按新進場/續抱/防守賣出/空手分類，頁底保留全標的總表。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
@@ -173,14 +173,12 @@ def calculate_indicators(df):
     df['價量動能流'] = (df['Volume'] * mf_multiplier / 1000000).round(2)
     df['CLV'] = (df['Close'] - df['Low']) / high_low_diff
     
-    # 🛠️ 補回 ATR14 計算段落
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift(1)).abs()
     low_close = (df['Low'] - df['Close'].shift(1)).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['ATR14'] = tr.rolling(14).mean().fillna(df['Close'] * 0.03)
 
-    # 布林通道 (BB 20, 2)
     std20 = df['Close'].rolling(20).std().fillna(df['Close'] * 0.02)
     df['MA20'] = df['Close'].rolling(20).mean()
     df['BB_Mid'] = df['MA20']
@@ -220,7 +218,7 @@ def calculate_indicators(df):
     df['MACD_Shrink'] = macd_shrink
     return df
 
-# --- 6. V07.1 美股歷史回測引擎 ---
+# --- 6. V07.1 回測與七維矩陣計算 (包含防守賣出狀態精準識別) ---
 def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fund_info, 
                                fee_rate=0.0005, tax_rate=0.0, slippage=0.001):
     df_st = clean_and_flatten_df(df_stock.copy())
@@ -262,6 +260,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     rs_vals = valid_df['RS_20'].values
 
     pending_buy_signal = False
+    last_exit_was_today = False
 
     for i in range(1, len(valid_df)):
         date_str = dates[i].strftime('%Y-%m-%d')
@@ -317,6 +316,9 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
                 else: loss_returns.append(abs(trade_return))
 
                 has_position = False
+                if i == len(valid_df) - 1:
+                    last_exit_was_today = True
+
                 trade_logs.append({"交易日期": date_str, "動作狀態": "🔴 賣出出場 (SELL)", "執行價格": f"${exit_price:.2f}", "單筆報酬": f"{trade_return*100:+.2f}%"})
                 plot_sells.append((dates[i], exit_price))
 
@@ -405,19 +407,31 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     else: grade = "D級 (劣等)"
 
     current_close = closes[-1]
+    
+    # 🛠️ 核心修復：精準區分「新進場」、「獲利續抱」、「觸發防守賣出」與「空手觀望」
     if has_position:
         current_status = "📦 獲利續抱中 (HOLD)"
         unrealized_pnl = (current_close - entry_price_with_cost) / entry_price_with_cost
         pnl_str = f"{unrealized_pnl*100:+.2f}%"
         entry_price_str = f"${entry_price:.2f}"
         sl_price_str = f"${current_stop_price:.2f}"
+    elif pending_buy_signal:
+        current_status = "🟢 買入訊號/新進場 (BUY)"
+        entry_price_str = f"${current_close:.2f}"
+        sl_price_str = f"${current_close - (atr_multiplier * atr_vals[-1]):.2f}"
+        pnl_str = "0.00%"
+    elif last_exit_was_today:
+        current_status = "🔴 觸發防守賣出 (SELL)"
+        entry_price_str = "-"
+        sl_price_str = "-"
+        pnl_str = "-"
     else:
         current_status = "💵 空手觀望 (CASH)"
         entry_price_str = "-"
         sl_price_str = "-"
         pnl_str = "-"
 
-    if enable_fcf_filter and fund_info["fcf_status"] == "NEGATIVE" and "HOLD" in current_status:
+    if enable_fcf_filter and fund_info["fcf_status"] == "NEGATIVE" and ("HOLD" in current_status or "BUY" in current_status):
         current_status = "⚠️ 現金流赤字/風控阻擋 (CASH)"
 
     latest_rs = rs_vals[-1] * 100 if len(rs_vals) > 0 else 0.0
@@ -444,7 +458,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                     "ATR動態防守價": "-", "複利總報酬": "0.0%", 
                     "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
                 })
-            return stock_reports, {}
+            return stock_reports, {}, f"❌ [{ticker}] 批次資料中找不到 K 線數據"
 
         df_stock = clean_and_flatten_df(df_stock)
         df_stock = calculate_indicators(df_stock)
@@ -477,8 +491,9 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                 "未實現損益": pnl, "ATR動態防守價": sl_price, "複利總報酬": f"{ret * 100:+.2f}%", 
                 "歷史勝率": f"{win * 100:.1f}%", "交易次數": trades, "獲利因子": pf
             })
-        return stock_reports, stock_details
-    except Exception:
+        return stock_reports, stock_details, "SUCCESS"
+    except Exception as e:
+        err_detail = f"💥 [{ticker}] 運算例外: {type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
         stock_reports = []
         for strat in strategies:
             stock_reports.append({
@@ -490,7 +505,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                 "ATR動態防守價": "-", "複利總報酬": "0.0%", 
                 "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
             })
-        return stock_reports, {}
+        return stock_reports, {}, err_detail
 
 # --- 7. Session State 記憶庫 ---
 if "calculated" not in st.session_state:
@@ -525,13 +540,16 @@ if st.button("🚀 啟動 V07.1 美股全自動多因子掃描引擎", use_conta
             logs.append(f"   ➔ 下載完成! df_chunk Shape: {df_chunk.shape} | 是否為空: {df_chunk.empty}")
         except Exception as e:
             df_chunk = pd.DataFrame()
-            logs.append(f"   ❌ 第 {idx_chunk+1} 批下載爆發 Exception: {str(e)}")
+            logs.append(f"   ❌ 第 {idx_chunk+1} 批下載爆發 Exception: {type(e).__name__}: {str(e)}")
 
         for ticker in chunk:
             df_single = extract_stock_from_chunk(df_chunk, ticker)
-            s_reports, s_details = process_single_stock_us(
+            s_reports, s_details, err_status = process_single_stock_us(
                 ticker, df_single, cloud_names_dict, backtest_days, df_macro, strategies
             )
+            if err_status != "SUCCESS":
+                logs.append(f"   ⚠️ 個股 [{ticker}] 異常診斷: {err_status}")
+
             if s_reports:
                 master_report.extend(s_reports)
                 st.session_state.detail_db.update(s_details)
@@ -547,47 +565,68 @@ if show_debug_log and st.session_state.get("debug_logs"):
     with st.sidebar.expander("🐛 系統診斷日誌", expanded=True):
         st.code("\n".join(st.session_state.debug_logs), language="text")
 
-# --- 9. 🚀 網頁三大主分頁系統 (復刻 V06 戰術分類 + 頁底總表) ---
-tab_v06_main, tab_7d, tab_debug = st.tabs(["📊 倉位動作與戰術分類", "🛡️ 七維戰術矩陣診斷", "📈 布林通道與 K 線軌跡"])
+# --- 9. 🚀 復刻 V06 倉位狀態分類 + 頁底總表排版 ---
+tab_v06_main, tab_7d, tab_debug = st.tabs(["📊 倉位動作與狀態分類", "🛡️ 七維戰術矩陣診斷", "📈 布林通道與 K 線軌跡"])
 
 with tab_v06_main:
-    if st.session_state.calculated and not st.session_state.final_df.empty and "策略手法" in st.session_state.final_df.columns:
-        st.markdown("### 🎯 **戰術策略分類面板 (獨立操作篩選)**")
+    if st.session_state.calculated and not st.session_state.final_df.empty and "倉位狀態" in st.session_state.final_df.columns:
+        st.markdown("### 🎯 **倉位狀態分類面板 (復刻 V06 精準選股觀看)**")
         
-        strat_tabs = st.tabs([
-            "⚡ A: 激進動能型", 
-            "🌊 B: 穩健波段型", 
-            "🚀 C: 槓桿強勢型", 
-            "🎯 D: 均值回歸抄底型", 
-            "🌊 E: 價量動能流跟隨型"
+        # 🛠️ 1.b 復刻 V06 以「倉位狀態」作為子頁籤分類
+        status_tabs = st.tabs([
+            "🟢 新進場 / 買入訊號 (BUY)", 
+            "📦 獲利續抱中 (HOLD)", 
+            "🔴 觸發防守賣出 (SELL)", 
+            "💵 空手觀望 / 風控阻擋"
         ])
 
-        strat_mapping = [
-            ("⚡ A: 激進動能型", "A: 激進動能型"),
-            ("🌊 B: 穩健波段型", "B: 穩健波段型"),
-            ("🚀 C: 槓桿強勢型", "C: 槓桿強勢型"),
-            ("🎯 D: 均值回歸抄底型", "D: 均值回歸抄底型"),
-            ("🌊 E: 價量動能流跟隨型", "E: 價量動能流跟隨型")
-        ]
+        df_all = st.session_state.final_df
 
-        for idx, (label, strat_full_name) in enumerate(strat_mapping):
-            with strat_tabs[idx]:
-                sub_df = st.session_state.final_df[st.session_state.final_df['策略手法'] == strat_full_name].copy()
-                active_df = sub_df[sub_df['倉位狀態'].str.contains("BUY|HOLD|買入|續抱", na=False)]
+        # 分類 1: 🟢 新進場
+        with status_tabs[0]:
+            df_buy = df_all[df_all['倉位狀態'].str.contains("BUY|買入|新進場", na=False)].copy()
+            col_b1, col_b2 = st.columns(2)
+            col_b1.metric("🟢 當前新進場標的總數", f"{len(df_buy)} 筆")
+            try:
+                avg_e = df_buy['期望值 Expectancy'].str.rstrip('%').astype(float).mean()
+                col_b2.metric("平均期望值", f"{avg_e:+.2f}%")
+            except Exception: col_b2.metric("平均期望值", "-")
+            st.dataframe(df_buy, use_container_width=True, hide_index=True)
 
-                col_m1, col_m2, col_m3 = st.columns(3)
-                col_m1.metric("該戰術總掃描標的", f"{len(sub_df)} 檔")
-                col_m2.metric("🟢 當前觸發買訊/持股", f"{len(active_df)} 檔")
-                
-                try:
-                    exp_vals = sub_df['期望值 Expectancy'].str.rstrip('%').astype(float)
-                    avg_exp = exp_vals.mean()
-                    col_m3.metric("該戰術平均期望值", f"{avg_exp:+.2f}%")
-                except Exception:
-                    col_m3.metric("該戰術平均期望值", "-")
+        # 分類 2: 📦 獲利續抱
+        with status_tabs[1]:
+            df_hold = df_all[df_all['倉位狀態'].str.contains("HOLD|續抱", na=False)].copy()
+            col_h1, col_h2 = st.columns(2)
+            col_h1.metric("📦 當前獲利續抱標的總數", f"{len(df_hold)} 筆")
+            try:
+                avg_e = df_hold['期望值 Expectancy'].str.rstrip('%').astype(float).mean()
+                col_h2.metric("平均期望值", f"{avg_e:+.2f}%")
+            except Exception: col_h2.metric("平均期望值", "-")
+            st.dataframe(df_hold, use_container_width=True, hide_index=True)
 
-                st.dataframe(sub_df, use_container_width=True, hide_index=True)
+        # 分類 3: 🔴 觸發防守賣出
+        with status_tabs[2]:
+            df_sell = df_all[df_all['倉位狀態'].str.contains("SELL|賣出|防守", na=False)].copy()
+            col_s1, col_s2 = st.columns(2)
+            col_s1.metric("🔴 當前防守離場標的總數", f"{len(df_sell)} 筆")
+            try:
+                avg_e = df_sell['期望值 Expectancy'].str.rstrip('%').astype(float).mean()
+                col_s2.metric("平均期望值", f"{avg_e:+.2f}%")
+            except Exception: col_s2.metric("平均期望值", "-")
+            st.dataframe(df_sell, use_container_width=True, hide_index=True)
 
+        # 分類 4: 💵 空手觀望 / 風控阻擋
+        with status_tabs[3]:
+            df_cash = df_all[df_all['倉位狀態'].str.contains("CASH|觀望|赤字|風控", na=False)].copy()
+            col_c1, col_c2 = st.columns(2)
+            col_c1.metric("💵 當前觀望標的總數", f"{len(df_cash)} 筆")
+            try:
+                avg_e = df_cash['期望值 Expectancy'].str.rstrip('%').astype(float).mean()
+                col_c2.metric("平均期望值", f"{avg_e:+.2f}%")
+            except Exception: col_c2.metric("平均期望值", "-")
+            st.dataframe(df_cash, use_container_width=True, hide_index=True)
+
+        # 🛠️ 1.c 頁面最下方保留全標的總表
         st.divider()
         st.markdown("### 📋 **全標的綜合總表 (Master Table)**")
         st.dataframe(st.session_state.final_df, use_container_width=True, hide_index=True)
@@ -625,7 +664,6 @@ with tab_debug:
             data_pack = st.session_state.detail_db[db_key]
             logs_df, buys, sells, v_df = data_pack["logs"], data_pack["buys"], data_pack["sells"], data_pack["v_df"]
             fig = go.Figure()
-            # 布林通道上下軌與帶狀陰影
             if 'BB_Upper' in v_df.columns:
                 fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Upper'], mode='lines', name='布林上軌', line=dict(color='rgba(255,165,0,0.6)', width=1, dash='dash')))
                 fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Lower'], mode='lines', name='布林下軌', fill='tonexty', fillcolor='rgba(255,165,0,0.06)', line=dict(color='rgba(255,165,0,0.6)', width=1, dash='dash')))
