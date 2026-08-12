@@ -10,13 +10,18 @@ from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
 st.set_page_config(page_title="🔮 美股量化沙盒 V07.1", page_icon="🔮", layout="wide")
-st.title("🔮 美股量化投資沙盒 V07.1 (完整功能與成效驗證升級版)")
-st.caption("🚀 已實裝 **四大專屬分頁 + 布林 6 大專家分類 + 昨日買訊成效驗證 + 雲端自選管理**。")
+st.title("🔮 美股量化投資沙盒 V07.1 (Google表單自動寫入與機構量化系統)")
+st.caption("🚀 已實裝 **四大專屬分頁 + 布林 6 大專家分類 + 昨日買訊成效驗證 + Google表單免權限永久寫入**。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
 
 GSHEET_URL = "https://docs.google.com/spreadsheets/d/1491qc1Y59PwCOWaPZblpAieR0_iCI-7KKLtZUuG7Qe4/edit?usp=sharing"
+
+# 🛠️ 復刻 V06.3 美股 Google 表單寫入參數
+GOOGLE_FORM_ID = "1FAIpQLSdpLHywd-HysLTMbGpuEByQwEaoVaqtvTW0Uwav136m-kIDfQ"
+ENTRY_TICKER_ID = "entry.2146824153"
+ENTRY_NAME_ID = "entry.1673006020"
 
 @st.cache_data(ttl=60)
 def get_tickers_from_sheet(url):
@@ -35,9 +40,42 @@ def get_tickers_from_sheet(url):
 
 default_tickers, cloud_names_dict = get_tickers_from_sheet(GSHEET_URL)
 
-with st.sidebar.expander("🌐 雲端自選清單管理", expanded=False):
-    st.markdown(f"[🔗 點此開啟 Google 雲端試算表]({GSHEET_URL})")
-    if st.button("🔄 強制刷新雲端清單快取", use_container_width=True):
+# 🛠️ 復刻 V06.3 Google 表單免權限自動寫入機制
+with st.sidebar.expander("🌐 雲端自選清單管理與新增", expanded=False):
+    st.markdown(f"[🔗 點此開啟 Google 試算表檢視]({GSHEET_URL})")
+    st.markdown("---")
+    st.markdown("**➕ 免權限寫入新標的至美股雲端**")
+    
+    with st.form("add_us_stock_form_sidebar"):
+        new_tk_input = st.text_input("美股代號 (如: NVDA 或 TSLA)", placeholder="NVDA").strip().upper()
+        new_name_input = st.text_input("產業領域/中文備註 (選填)", placeholder="AI半導體").strip()
+        submit_btn = st.form_submit_button("🚀 一鍵同步寫入美股雲端", use_container_width=True)
+        
+        if submit_btn:
+            if not new_tk_input:
+                st.warning("⚠️ 請務必輸入股票代號！")
+            else:
+                form_url = f"https://docs.google.com/forms/d/e/{GOOGLE_FORM_ID}/formResponse"
+                form_data = {
+                    ENTRY_TICKER_ID: new_tk_input,
+                    ENTRY_NAME_ID: new_name_input
+                }
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                }
+                try:
+                    res = requests.post(form_url, data=form_data, headers=headers)
+                    if res.status_code == 200:
+                        st.success(f"🎉 寫入成功！【{new_tk_input} - {new_name_input}】已透過表單寫入美股雲端！")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"⚠️ 寫入失敗，Google 回應代碼：[{res.status_code}]")
+                except Exception as e:
+                    st.error(f"❌ 連線發生錯誤: {e}")
+
+    st.markdown("---")
+    if st.button("🔄 強制刷新雲端快取", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
     st.caption(f"已同步雲端標的數：{len(cloud_names_dict)} 筆中文名稱對照")
@@ -262,10 +300,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     vol_vals, vol_m20_vals = valid_df['Volume'].values, valid_df['Vol_MA20'].values
     m_shrink_vals, m_hist_vals = valid_df['MACD_Shrink'].values, valid_df['MACD_Hist'].values
     clv_vals, atr_vals = valid_df['CLV'].values, valid_df['ATR14'].values
-    
-    # 🛠️ 核心修復：補充補齊 valid_df['BB_Lower'].values 的解包變數
     bb_mid_vals, bb_upper_vals, bb_lower_vals, bb_sqz_vals = valid_df['BB_Mid'].values, valid_df['BB_Upper'].values, valid_df['BB_Lower'].values, valid_df['BB_Squeeze'].values
-    
     pv_flow_vals, q80_vals = valid_df['價量動能流'].values, valid_df['動能流_Q80'].values
     rs_vals = valid_df['RS_20'].values
 
@@ -743,7 +778,7 @@ with tab_7d_bb:
 
         st.divider()
 
-        # 布林通道 6 大專家分類 (包含新增的「跌破 20MA 中軌」)
+        # 布林通道 6 大專家分類
         st.markdown("## 📈 **二、 布林通道 (Bollinger Bands 20,2) 專家診斷與 6 大分類**")
         
         with st.expander("📖 **點此展開「布林通道 (Bollinger Bands)」買賣指令說明書**", expanded=False):
