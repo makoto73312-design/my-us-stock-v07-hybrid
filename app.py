@@ -9,7 +9,7 @@ import traceback
 from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="🔮 美股量化沙盒 V07.1", page_icon="🔮", layout="wide")
+st.set_page_config(page_title="🔮 美股量化沙盒 V07.1 (KeyError修復版)", page_icon="🔮", layout="wide")
 st.title("🔮 美股量化投資沙盒 V07.1 (戰術分類與機構級量化系統)")
 st.caption("🚀 **V06 經典戰術分類排版 + V07 機構量化引擎**：按 A~E 戰術分頁選股，頁底保留全標的總表，整合七維矩陣與布林通道。")
 
@@ -421,10 +421,22 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             f"{expectancy*100:+.2f}%", f"{cagr*100:+.1f}%", f"{mdd*100:.1f}%", 
             f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%", matrix_7d_str, matrix_7d_details)
 
+# ⚡ 單個股票處理 Worker (100% 全員備援防呆，防止 KeyError)
 def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macro_data, strategies):
     try:
         if df_stock is None or df_stock.empty or len(df_stock) < 10:
-            return [], {}
+            stock_reports = []
+            for strat in strategies:
+                stock_reports.append({
+                    "股票代號": ticker, "當前市價": "-", "策略手法": strat,
+                    "倉位狀態": "🛑 數據不足", "期望值 Expectancy": "0.0%", "七維戰術矩陣": "0/7 (無)",
+                    "綜合評級": "D級", "大盤 Alpha (RS20)": "0.0%", "年化 CAGR": "0.0%", 
+                    "最大回撤 MDD": "0.0%", "夏普比率 Sharpe": "0.00", "平均浮虧 MAE": "0.0%", 
+                    "平均浮盈 MFE": "0.0%", "建議進場價": "-", "未實現損益": "-", 
+                    "ATR動態防守價": "-", "複利總報酬": "0.0%", 
+                    "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
+                })
+            return stock_reports, {}
 
         df_stock = clean_and_flatten_df(df_stock)
         df_stock = calculate_indicators(df_stock)
@@ -459,7 +471,18 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
             })
         return stock_reports, stock_details
     except Exception:
-        return [], {}
+        stock_reports = []
+        for strat in strategies:
+            stock_reports.append({
+                "股票代號": ticker, "當前市價": "-", "策略手法": strat,
+                "倉位狀態": "🛑 數據不足", "期望值 Expectancy": "0.0%", "七維戰術矩陣": "0/7 (無)",
+                "綜合評級": "D級", "大盤 Alpha (RS20)": "0.0%", "年化 CAGR": "0.0%", 
+                "最大回撤 MDD": "0.0%", "夏普比率 Sharpe": "0.00", "平均浮虧 MAE": "0.0%", 
+                "平均浮盈 MFE": "0.0%", "建議進場價": "-", "未實現損益": "-", 
+                "ATR動態防守價": "-", "複利總報酬": "0.0%", 
+                "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
+            })
+        return stock_reports, {}
 
 # --- 7. Session State 記憶庫 ---
 if "calculated" not in st.session_state:
@@ -520,7 +543,7 @@ if show_debug_log and st.session_state.get("debug_logs"):
 tab_v06_main, tab_7d, tab_debug = st.tabs(["📊 倉位動作與戰術分類", "🛡️ 七維戰術矩陣診斷", "📈 布林通道與 K 線軌跡"])
 
 with tab_v06_main:
-    if st.session_state.calculated:
+    if st.session_state.calculated and not st.session_state.final_df.empty and "策略手法" in st.session_state.final_df.columns:
         st.markdown("### 🎯 **戰術策略分類面板 (獨立操作篩選)**")
         
         # 5 大戰術手法子頁籤
