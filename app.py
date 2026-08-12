@@ -35,7 +35,6 @@ def get_tickers_from_sheet(url):
 
 default_tickers, cloud_names_dict = get_tickers_from_sheet(GSHEET_URL)
 
-# 🛠️ 步驟三 5: 雲端自選清單管理 (復刻 V06 連結與控制)
 with st.sidebar.expander("🌐 雲端自選清單管理", expanded=False):
     st.markdown(f"[🔗 點此開啟 Google 雲端試算表]({GSHEET_URL})")
     if st.button("🔄 強制刷新雲端清單快取", use_container_width=True):
@@ -263,7 +262,10 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     vol_vals, vol_m20_vals = valid_df['Volume'].values, valid_df['Vol_MA20'].values
     m_shrink_vals, m_hist_vals = valid_df['MACD_Shrink'].values, valid_df['MACD_Hist'].values
     clv_vals, atr_vals = valid_df['CLV'].values, valid_df['ATR14'].values
-    bb_mid_vals, bb_upper_vals, bb_lower_vals, bb_sqz_vals = valid_df['BB_Mid'].values, valid_df['BB_Upper'].values, valid_df['BB_Squeeze'].values
+    
+    # 🛠️ 核心修復：補充補齊 valid_df['BB_Lower'].values 的解包變數
+    bb_mid_vals, bb_upper_vals, bb_lower_vals, bb_sqz_vals = valid_df['BB_Mid'].values, valid_df['BB_Upper'].values, valid_df['BB_Lower'].values, valid_df['BB_Squeeze'].values
+    
     pv_flow_vals, q80_vals = valid_df['價量動能流'].values, valid_df['動能流_Q80'].values
     rs_vals = valid_df['RS_20'].values
 
@@ -361,11 +363,9 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
                 if pv_flow_p > q80_p and pv_flow_p > 0 and c_p > m50_p and m50_p >= m50_y and rs_p > 0: 
                     pending_buy_signal = True
 
-            # 紀錄昨日是否剛觸發買訊
             if i == len(valid_df) - 2 and pending_buy_signal:
                 signal_yesterday_triggered = True
 
-    # 🛠️ 步驟三 4: 昨日訊號 vs 今日成效資料組裝
     today_open_p, today_close_p = opens[-1], closes[-1]
     today_intraday_ret = (today_close_p - today_open_p) / today_open_p
     yesterday_verification = {
@@ -377,7 +377,6 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
         "is_win": "🟢 獲利" if today_intraday_ret > 0 else "🔴 虧損"
     }
 
-    # 七維矩陣與布林 6 大專家分類
     latest_idx = -1
     d1_bull = bool(m_bulls[latest_idx])
     d2_vix = bool(vixs[latest_idx] < 22.0)
@@ -392,7 +391,7 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
         {"戰術維度項目": "2. VIX 恐慌位階", "檢核標準": "恐慌指數 < 22 (低風險)", "當前狀態": "✅ 符合" if d2_vix else "❌ 高恐慌"},
         {"戰術維度項目": "3. RSI 區間動能", "檢核標準": "14日 RSI 介於 45~75 (健康升勢)", "當前狀態": "✅ 符合" if d3_rsi else "❌ 過熱/過冷"},
         {"戰術維度項目": "4. 攻擊量能發動", "檢核標準": "當日成交量 > 20日均量", "當前狀態": "✅ 符合" if d4_vol else "❌ 量能平淡"},
-        {"戰術維度項目": "5. MACD 柱狀動能", "檢核標準": "MACD 柱狀體翻紅或綠柱收斂", "當前狀態": "✅ 符合" if d5_macd else "❌ 柱體弱化"},
+        {"戰術維度項目": "5. MACD 柱狀動能", "檢核標準": "MACD 柱狀體翻紅或綠柱連續收斂", "當前狀態": "✅ 符合" if d5_macd else "❌ 柱體弱化"},
         {"戰術維度項目": "6. 自由現金流 FCF", "檢核標準": "近四季 FCF >= 0 (營運健全)", "當前狀態": "✅ 符合" if d6_fcf else "❌ 現金流赤字"},
         {"戰術維度項目": "7. 相對強弱 RS20", "檢核標準": "近 20 日漲幅跑贏大盤 Alpha > 0", "當前狀態": "✅ 符合" if d7_rs else "❌ 跑輸大盤"}
     ]
@@ -401,7 +400,6 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
     tag_7d = "極強" if score_7d >= 6 else ("強勢" if score_7d >= 4 else ("中性" if score_7d >= 3 else "偏弱"))
     matrix_7d_str = f"{score_7d}/7 ({tag_7d})"
 
-    # 🛠️ 步驟二改進：加入第 6 個獨立分類「跌破 20MA 中軌 (離場防守)」
     last_c, last_l = closes[latest_idx], lows[latest_idx]
     last_mid, last_up, last_low = bb_mid_vals[latest_idx], bb_upper_vals[latest_idx], bb_lower_vals[latest_idx]
     last_sqz = bb_sqz_vals[latest_idx]
@@ -757,7 +755,6 @@ with tab_7d_bb:
             * **⚠️ 跌破 20MA 中軌 (離場防守)**：收盤價跌破 20MA 中軌生命線，多頭結構受損。**指令：觸發防守避險，停損或獲利出場**。
             """)
 
-        # 🛠️ 步驟二改進：6 大分類頁籤
         bb_tabs = st.tabs([
             "🔥 帶狀極致壓縮", 
             "🚀 突破布林上軌", 
@@ -785,7 +782,7 @@ with tab_7d_bb:
     else:
         st.info("💡 請先啟動掃描引擎。")
 
-# 🛠️ 步驟三 4: 新增「昨日訊號 vs 今日成效驗證」分頁
+# 新增「昨日訊號 vs 今日成效驗證」分頁
 with tab_verify:
     if st.session_state.calculated and not st.session_state.final_df.empty:
         st.markdown("## ⚡ **昨日買訊 vs 今日實質成效驗證 (無偏誤檢驗)**")
