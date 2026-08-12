@@ -9,7 +9,7 @@ import traceback
 from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
-st.set_page_config(page_title="🔮 美股量化沙盒 V07.1 (KeyError修復版)", page_icon="🔮", layout="wide")
+st.set_page_config(page_title="🔮 美股量化沙盒 V07.1 (診斷模式)", page_icon="🔮", layout="wide")
 st.title("🔮 美股量化投資沙盒 V07.1 (戰術分類與機構級量化系統)")
 st.caption("🚀 **V06 經典戰術分類排版 + V07 機構量化引擎**：按 A~E 戰術分頁選股，頁底保留全標的總表，整合七維矩陣與布林通道。")
 
@@ -52,7 +52,7 @@ backtest_days = st.sidebar.slider("歷史回測天數設定", min_value=100, max
 enable_fcf_filter = st.sidebar.checkbox("🛡️ 啟用「FCF 負值」強制攔截", value=True)
 
 st.sidebar.divider()
-show_debug_log = st.sidebar.checkbox("🐛 顯示系統診斷日誌", value=False)
+show_debug_log = st.sidebar.checkbox("🐛 顯示系統診斷日誌", value=True)
 
 def clean_and_flatten_df(df):
     if df is None or df.empty:
@@ -132,7 +132,7 @@ def fetch_us_macro_dataframe():
     except Exception as e:
         dates = pd.date_range(end=pd.Timestamp.now().normalize(), periods=500, freq='D')
         df_macro = pd.DataFrame({'VIX': 18.0, 'Market_Bull': True, 'SPY_Close': 500.0}, index=dates)
-        return df_macro, 18.0, True, "🛡️ 標準平衡型 (預設)", f"ERROR: {str(e)}"
+        return df_macro, 18.0, True, "🛡️ 標準平衡型 (預設)", f"ERROR: {type(e).__name__}: {str(e)}"
 
 df_macro, vix_score, is_spy_bull, market_posture, macro_status = fetch_us_macro_dataframe()
 
@@ -421,10 +421,10 @@ def run_backtest_engine_v07_us(df_stock, df_macro_input, strategy_name, days, fu
             f"{expectancy*100:+.2f}%", f"{cagr*100:+.1f}%", f"{mdd*100:.1f}%", 
             f"{sharpe:.2f}", f"{avg_mae*100:.1f}%", f"{avg_mfe*100:+.1f}%", matrix_7d_str, matrix_7d_details)
 
-# ⚡ 單個股票處理 Worker (100% 全員備援防呆，防止 KeyError)
+# ⚡ 單個股票處理 Worker (帶有詳細診斷 Traceback 紀錄)
 def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macro_data, strategies):
     try:
-        if df_stock is None or df_stock.empty or len(df_stock) < 10:
+        if df_stock is None or df_stock.empty:
             stock_reports = []
             for strat in strategies:
                 stock_reports.append({
@@ -436,7 +436,21 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                     "ATR動態防守價": "-", "複利總報酬": "0.0%", 
                     "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
                 })
-            return stock_reports, {}
+            return stock_reports, {}, f"❌ [{ticker}] 批次資料中找不到 K 線數據"
+
+        if len(df_stock) < 10:
+            stock_reports = []
+            for strat in strategies:
+                stock_reports.append({
+                    "股票代號": ticker, "當前市價": "-", "策略手法": strat,
+                    "倉位狀態": "🛑 數據不足", "期望值 Expectancy": "0.0%", "七維戰術矩陣": "0/7 (無)",
+                    "綜合評級": "D級", "大盤 Alpha (RS20)": "0.0%", "年化 CAGR": "0.0%", 
+                    "最大回撤 MDD": "0.0%", "夏普比率 Sharpe": "0.00", "平均浮虧 MAE": "0.0%", 
+                    "平均浮盈 MFE": "0.0%", "建議進場價": "-", "未實現損益": "-", 
+                    "ATR動態防守價": "-", "複利總報酬": "0.0%", 
+                    "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
+                })
+            return stock_reports, {}, f"⚠️ [{ticker}] K 線筆數不足 10 筆 (僅 {len(df_stock)} 筆)"
 
         df_stock = clean_and_flatten_df(df_stock)
         df_stock = calculate_indicators(df_stock)
@@ -469,8 +483,9 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                 "未實現損益": pnl, "ATR動態防守價": sl_price, "複利總報酬": f"{ret * 100:+.2f}%", 
                 "歷史勝率": f"{win * 100:.1f}%", "交易次數": trades, "獲利因子": pf
             })
-        return stock_reports, stock_details
-    except Exception:
+        return stock_reports, stock_details, "SUCCESS"
+    except Exception as e:
+        err_detail = f"💥 [{ticker}] 運算例外: {type(e).__name__}: {str(e)}\n{traceback.format_exc()}"
         stock_reports = []
         for strat in strategies:
             stock_reports.append({
@@ -482,7 +497,7 @@ def process_single_stock_us(ticker, df_stock, cloud_dict, backtest_days, df_macr
                 "ATR動態防守價": "-", "複利總報酬": "0.0%", 
                 "歷史勝率": "0.0%", "交易次數": 0, "獲利因子": "0.00"
             })
-        return stock_reports, {}
+        return stock_reports, {}, err_detail
 
 # --- 7. Session State 記憶庫 ---
 if "calculated" not in st.session_state:
@@ -517,13 +532,16 @@ if st.button("🚀 啟動 V07.1 美股全自動多因子掃描引擎", use_conta
             logs.append(f"   ➔ 下載完成! df_chunk Shape: {df_chunk.shape} | 是否為空: {df_chunk.empty}")
         except Exception as e:
             df_chunk = pd.DataFrame()
-            logs.append(f"   ❌ 第 {idx_chunk+1} 批下載爆發 Exception: {str(e)}")
+            logs.append(f"   ❌ 第 {idx_chunk+1} 批下載爆發 Exception: {type(e).__name__}: {str(e)}")
 
         for ticker in chunk:
             df_single = extract_stock_from_chunk(df_chunk, ticker)
-            s_reports, s_details = process_single_stock_us(
+            s_reports, s_details, err_status = process_single_stock_us(
                 ticker, df_single, cloud_names_dict, backtest_days, df_macro, strategies
             )
+            if err_status != "SUCCESS":
+                logs.append(f"   ⚠️ 個股 [{ticker}] 異常診斷: {err_status}")
+
             if s_reports:
                 master_report.extend(s_reports)
                 st.session_state.detail_db.update(s_details)
@@ -546,7 +564,6 @@ with tab_v06_main:
     if st.session_state.calculated and not st.session_state.final_df.empty and "策略手法" in st.session_state.final_df.columns:
         st.markdown("### 🎯 **戰術策略分類面板 (獨立操作篩選)**")
         
-        # 5 大戰術手法子頁籤
         strat_tabs = st.tabs([
             "⚡ A: 激進動能型", 
             "🌊 B: 穩健波段型", 
