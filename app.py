@@ -10,15 +10,14 @@ from datetime import datetime
 
 # --- 1. 網頁核心外觀配置 ---
 st.set_page_config(page_title="🔮 美股量化沙盒 V07.1", page_icon="🔮", layout="wide")
-st.title("🔮 美股量化投資沙盒 V07.1 (Google表單自動寫入與機構量化系統)")
-st.caption("🚀 已實裝 **四大專屬分頁 + 布林 6 大專家分類 + 昨日買訊成效驗證 + Google表單免權限永久寫入**。")
+st.title("🔮 美股量化投資沙盒 V07.1 (高對比 K 線圖升級版)")
+st.caption("🚀 已實裝 **四大專屬分頁 + 高對比實體 K 線圖 + 布林 6 大專家分類 + 昨日買訊驗證 + Google表單免權限自動寫入**。")
 
 # --- 2. 側邊欄控制台 ---
 st.sidebar.header("⚙️ 全自動大掃描設定")
 
 GSHEET_URL = "https://docs.google.com/spreadsheets/d/1491qc1Y59PwCOWaPZblpAieR0_iCI-7KKLtZUuG7Qe4/edit?usp=sharing"
 
-# 🛠️ 復刻 V06.3 美股 Google 表單寫入參數
 GOOGLE_FORM_ID = "1FAIpQLSdpLHywd-HysLTMbGpuEByQwEaoVaqtvTW0Uwav136m-kIDfQ"
 ENTRY_TICKER_ID = "entry.2146824153"
 ENTRY_NAME_ID = "entry.1673006020"
@@ -40,7 +39,6 @@ def get_tickers_from_sheet(url):
 
 default_tickers, cloud_names_dict = get_tickers_from_sheet(GSHEET_URL)
 
-# 🛠️ 復刻 V06.3 Google 表單免權限自動寫入機制
 with st.sidebar.expander("🌐 雲端自選清單管理與新增", expanded=False):
     st.markdown(f"[🔗 點此開啟 Google 試算表檢視]({GSHEET_URL})")
     st.markdown("---")
@@ -658,7 +656,7 @@ tab_v06_main, tab_7d_bb, tab_verify, tab_debug = st.tabs([
     "📊 倉位動作與狀態分類", 
     "🛡️ 七維矩陣與布林專家診斷", 
     "⚡ 昨日訊號 vs 今日成效驗證",
-    "📈 布林通道與 K 線軌跡"
+    "📈 高對比 K 線與軌跡圖"
 ])
 
 with tab_v06_main:
@@ -674,7 +672,6 @@ with tab_v06_main:
 
         df_all = st.session_state.final_df
 
-        # 分類 1: 🟢 新進場
         with status_tabs[0]:
             df_buy = df_all[df_all['倉位狀態'].str.contains("BUY|買入|新進場", na=False)].copy()
             col_b1, col_b2 = st.columns(2)
@@ -685,7 +682,6 @@ with tab_v06_main:
             except Exception: col_b2.metric("平均期望值", "-")
             st.dataframe(df_buy, use_container_width=True, hide_index=True)
 
-        # 分類 2: 📦 獲利續抱
         with status_tabs[1]:
             df_hold = df_all[df_all['倉位狀態'].str.contains("HOLD|續抱", na=False)].copy()
             col_h1, col_h2 = st.columns(2)
@@ -696,7 +692,6 @@ with tab_v06_main:
             except Exception: col_h2.metric("平均期望值", "-")
             st.dataframe(df_hold, use_container_width=True, hide_index=True)
 
-        # 分類 3: 🔴 觸發防守賣出
         with status_tabs[2]:
             df_sell = df_all[df_all['倉位狀態'].str.contains("SELL|賣出|防守", na=False)].copy()
             col_s1, col_s2 = st.columns(2)
@@ -707,7 +702,6 @@ with tab_v06_main:
             except Exception: col_s2.metric("平均期望值", "-")
             st.dataframe(df_sell, use_container_width=True, hide_index=True)
 
-        # 分類 4: 💵 空手觀望
         with status_tabs[3]:
             df_cash = df_all[df_all['倉位狀態'].str.contains("CASH|觀望|赤字|風控", na=False)].copy()
             col_c1, col_c2 = st.columns(2)
@@ -728,7 +722,6 @@ with tab_7d_bb:
     if st.session_state.calculated and not st.session_state.final_df.empty:
         df_all = st.session_state.final_df.copy()
 
-        # 七維戰術矩陣
         st.markdown("## 🛡️ **一、 七維量化戰術矩陣 (全標的評分與分類一覽)**")
         
         with st.expander("📖 **點此展開「七維量化戰術矩陣」代表涵義說明書**", expanded=False):
@@ -778,7 +771,6 @@ with tab_7d_bb:
 
         st.divider()
 
-        # 布林通道 6 大專家分類
         st.markdown("## 📈 **二、 布林通道 (Bollinger Bands 20,2) 專家診斷與 6 大分類**")
         
         with st.expander("📖 **點此展開「布林通道 (Bollinger Bands)」買賣指令說明書**", expanded=False):
@@ -817,7 +809,6 @@ with tab_7d_bb:
     else:
         st.info("💡 請先啟動掃描引擎。")
 
-# 新增「昨日訊號 vs 今日成效驗證」分頁
 with tab_verify:
     if st.session_state.calculated and not st.session_state.final_df.empty:
         st.markdown("## ⚡ **昨日買訊 vs 今日實質成效驗證 (無偏誤檢驗)**")
@@ -847,6 +838,7 @@ with tab_verify:
     else:
         st.info("💡 請先啟動掃描引擎。")
 
+# 🛠️ 高對比實體 K 線圖與軌跡驗證
 with tab_debug:
     if st.session_state.calculated:
         col_tk, col_st = st.columns(2)
@@ -856,17 +848,44 @@ with tab_debug:
         if db_key in st.session_state.detail_db:
             data_pack = st.session_state.detail_db[db_key]
             logs_df, buys, sells, v_df = data_pack["logs"], data_pack["buys"], data_pack["sells"], data_pack["v_df"]
+            
             fig = go.Figure()
+            
+            # 1. 實體 K 線圖 (美股：綠漲紅跌)
+            fig.add_trace(go.Candlestick(
+                x=v_df.index,
+                open=v_df['Open'],
+                high=v_df['High'],
+                low=v_df['Low'],
+                close=v_df['Close'],
+                name='K線',
+                increasing_line_color='#00E676',
+                increasing_fillcolor='#00E676',
+                decreasing_line_color='#FF3333',
+                decreasing_fillcolor='#FF3333'
+            ))
+            
+            # 2. 高對比布林通道
             if 'BB_Upper' in v_df.columns:
-                fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Upper'], mode='lines', name='布林上軌', line=dict(color='rgba(255,165,0,0.6)', width=1, dash='dash')))
-                fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Lower'], mode='lines', name='布林下軌', fill='tonexty', fillcolor='rgba(255,165,0,0.06)', line=dict(color='rgba(255,165,0,0.6)', width=1, dash='dash')))
-                fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Mid'], mode='lines', name='布林中軌 (20MA)', line=dict(color='rgba(0,191,255,0.7)', width=1.2)))
+                fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Upper'], mode='lines', name='布林上軌', line=dict(color='#FFA726', width=1.2, dash='dash')))
+                fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Lower'], mode='lines', name='布林下軌', fill='tonexty', fillcolor='rgba(255,167,38,0.08)', line=dict(color='#FFA726', width=1.2, dash='dash')))
+                fig.add_trace(go.Scatter(x=v_df.index, y=v_df['BB_Mid'], mode='lines', name='20MA 中軌', line=dict(color='#29B6F6', width=1.5)))
             
-            fig.add_trace(go.Scatter(x=v_df.index, y=v_df['Close'], mode='lines', name='收盤價', line=dict(color='white', width=1.5)))
+            # 3. 買賣點標記
+            if len(buys) > 0: fig.add_trace(go.Scatter(x=[b[0] for b in buys], y=[b[1] for b in buys], mode='markers', name='🟢 BUY (T+1成交)', marker=dict(symbol='triangle-up', size=14, color='#00FF00')))
+            if len(sells) > 0: fig.add_trace(go.Scatter(x=[s[0] for s in sells], y=[s[1] for s in sells], mode='markers', name='🔴 SELL (ATR防守離場)', marker=dict(symbol='triangle-down', size=14, color='#FF2222')))
             
-            if len(buys) > 0: fig.add_trace(go.Scatter(x=[b[0] for b in buys], y=[b[1] for b in buys], mode='markers', name='🟢 BUY (T+1成交)', marker=dict(symbol='triangle-up', size=12, color='#00FF00')))
-            if len(sells) > 0: fig.add_trace(go.Scatter(x=[s[0] for s in sells], y=[s[1] for s in sells], mode='markers', name='🔴 SELL (ATR防守離場)', marker=dict(symbol='triangle-down', size=12, color='#FF0000')))
-            fig.update_layout(title=f"<b>美股 {debug_ticker} - {debug_strat} V07.1 軌跡圖 (含布林通道 20,2)</b>", template="plotly_dark")
+            # 4. 夜間極致黑背景設定
+            fig.update_layout(
+                title=f"<b>美股 {debug_ticker} - {debug_strat} V07.1 高對比 K 線軌跡圖</b>",
+                template="plotly_dark",
+                xaxis_rangeslider_visible=False,
+                paper_bgcolor='#0D1117',
+                plot_bgcolor='#161B22',
+                xaxis=dict(gridcolor='#21262D', zerolinecolor='#21262D'),
+                yaxis=dict(gridcolor='#21262D', zerolinecolor='#21262D'),
+                margin=dict(l=40, r=40, t=50, b=40)
+            )
             st.plotly_chart(fig, use_container_width=True)
             if not logs_df.empty: st.dataframe(logs_df, use_container_width=True, hide_index=True)
     else: st.info("💡 請先啟動掃描引擎。")
